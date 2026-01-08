@@ -15,6 +15,7 @@ const content = {
     buttons: [
       { type: "postback", title: "Pricing", payload: "SHOW_PRICING" },
       { type: "postback", title: "Hours", payload: "SHOW_HOURS" },
+      { type: "postback", title: "📞 Support", payload: "CONTACT_SUPPORT" },
     ],
   },
   SHOW_PRICING: {
@@ -27,6 +28,26 @@ const content = {
     text: "Mon-Fri, 9am - 5pm.",
     buttons: [
       { type: "postback", title: "Back to Menu", payload: "GET_STARTED" },
+    ],
+  },
+  CONTACT_SUPPORT: {
+    text: "You can reach our support team via phone or email.",
+    buttons: [
+      {
+        type: "phone_number",
+        title: "Call Us",
+        payload: "+15551234567", // Replace with your real number (include country code)
+      },
+      {
+        type: "web_url",
+        title: "Email Us",
+        url: "mailto:support@example.com",
+      },
+      {
+        type: "postback",
+        title: "Back to Menu",
+        payload: "GET_STARTED",
+      },
     ],
   },
 };
