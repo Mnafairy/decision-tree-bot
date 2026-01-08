@@ -100,4 +100,10 @@ async function callSendAPI(senderPsid, response) {
   }
 }
 
-app.listen(PORT || 3000, () => console.log("webhook is listening"));
+// Keep app.listen for local testing
+if (process.env.NODE_ENV !== "production") {
+  app.listen(3000, () => console.log("Local server running"));
+}
+
+// Export for Vercel
+module.exports = app;
