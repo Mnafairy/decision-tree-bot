@@ -48,20 +48,47 @@ app.get("/webhook", (req, res) => {
 });
 
 // --- MESSAGE HANDLER ---
-app.post("/webhook", (req, res) => {
+// app.post("/webhook", (req, res) => {
+//   let body = req.body;
+
+//   if (body.object === "page") {
+//     body.entry.forEach(function (entry) {
+//       let webhook_event = entry.messaging[0];
+//       let sender_psid = webhook_event.sender.id;
+
+//       if (webhook_event.postback) {
+//         handleResponse(sender_psid, webhook_event.postback.payload);
+//       } else if (webhook_event.message) {
+//         handleResponse(sender_psid, "GET_STARTED");
+//       }
+//     });
+//     res.status(200).send("EVENT_RECEIVED");
+//   } else {
+//     res.sendStatus(404);
+//   }
+// });
+app.post("/webhook", async (req, res) => {
+  // Notice 'async' here
   let body = req.body;
 
   if (body.object === "page") {
-    body.entry.forEach(function (entry) {
-      let webhook_event = entry.messaging[0];
-      let sender_psid = webhook_event.sender.id;
+    // 1. We must wait for the loop to finish
+    // We use Promise.all to handle multiple entries at once
+    await Promise.all(
+      body.entry.map(async (entry) => {
+        let webhook_event = entry.messaging[0];
+        let sender_psid = webhook_event.sender.id;
 
-      if (webhook_event.postback) {
-        handleResponse(sender_psid, webhook_event.postback.payload);
-      } else if (webhook_event.message) {
-        handleResponse(sender_psid, "GET_STARTED");
-      }
-    });
+        if (webhook_event.postback) {
+          // MUST use 'await' here
+          await handleResponse(sender_psid, webhook_event.postback.payload);
+        } else if (webhook_event.message) {
+          await handleResponse(sender_psid, "GET_STARTED");
+        }
+      })
+    );
+
+    // 2. ONLY send this after the await above is finished
     res.status(200).send("EVENT_RECEIVED");
   } else {
     res.sendStatus(404);
@@ -69,7 +96,22 @@ app.post("/webhook", (req, res) => {
 });
 
 // --- LOGIC HELPER ---
-function handleResponse(senderPsid, payload) {
+// function handleResponse(senderPsid, payload) {
+//   const data = content[payload] || content["GET_STARTED"];
+
+//   const response = {
+//     attachment: {
+//       type: "template",
+//       payload: {
+//         template_type: "button",
+//         text: data.text,
+//         buttons: data.buttons,
+//       },
+//     },
+//   };
+//   callSendAPI(senderPsid, response);
+// }
+async function handleResponse(senderPsid, payload) {
   const data = content[payload] || content["GET_STARTED"];
 
   const response = {
@@ -82,7 +124,9 @@ function handleResponse(senderPsid, payload) {
       },
     },
   };
-  callSendAPI(senderPsid, response);
+
+  // MUST await this
+  await callSendAPI(senderPsid, response);
 }
 
 // --- SEND API ---
