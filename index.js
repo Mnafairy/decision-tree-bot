@@ -70,10 +70,27 @@ app.get("/webhook", (req, res) => {
 // --- NOTIFICATION SYSTEM ---
 async function notifyAdmin(senderPsid) {
   const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+  const pageId = process.env.PAGE_ID; // Make sure you added this to .env
+
   if (!webhookUrl) return;
 
+  // This link opens your Business Suite Inbox directly
+  const inboxLink = `https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}`;
+
   const message = {
-    content: `🚨 **Support Request!**\nUser (PSID: ${senderPsid}) just clicked "Contact Support".`,
+    embeds: [
+      {
+        title: "🚨 New Support Request",
+        description: `User (PSID: ${senderPsid}) requested support.`,
+        color: 15158332, // Red color
+        fields: [
+          {
+            name: "Action Required",
+            value: `[Click here to Reply in Inbox](${inboxLink})`,
+          },
+        ],
+      },
+    ],
   };
 
   try {
@@ -110,16 +127,24 @@ app.post("/webhook", async (req, res) => {
     let webhook_event = entry.messaging[0];
     let sender_psid = webhook_event.sender.id;
 
+    // ... inside the loop ...
     if (webhook_event.postback) {
-      const payload = webhook_event.postback.payload;
-
-      // CHECK IF IT IS A SUPPORT REQUEST
-      if (payload === "CONTACT_SUPPORT") {
-        // Send notification silently in background (don't await, so user gets reply fast)
-        notifyAdmin(sender_psid);
+      // If they click a button, ALWAYS answer
+      await handleResponse(sender_psid, webhook_event.postback.payload);
+    } else if (webhook_event.message) {
+      // OPTION 1: Only show menu if they type specific keywords
+      const text = webhook_event.message.text.toLowerCase();
+      if (
+        text.includes("hi") ||
+        text.includes("menu") ||
+        text.includes("start")
+      ) {
+        await handleResponse(sender_psid, "GET_STARTED");
       }
-
-      await handleResponse(sender_psid, payload);
+      // OPTION 2 (Better for Support): Do nothing!
+      // If they type random text, we assume they might be talking to a human (YOU),
+      // so the bot stays silent.
+      // We only speak if they explicitly ask for the menu.
     }
     // ... existing code ...
   }
@@ -146,7 +171,37 @@ app.post("/webhook", async (req, res) => {
     res.sendStatus(404);
   }
 });
+async function notifyAdmin(senderPsid) {
+  const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+  const pageId = process.env.PAGE_ID; // Make sure you added this to .env
 
+  if (!webhookUrl) return;
+
+  // This link opens your Business Suite Inbox directly
+  const inboxLink = `https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}`;
+
+  const message = {
+    embeds: [
+      {
+        title: "🚨 New Support Request",
+        description: `User (PSID: ${senderPsid}) requested support.`,
+        color: 15158332, // Red color
+        fields: [
+          {
+            name: "Action Required",
+            value: `[Click here to Reply in Inbox](${inboxLink})`,
+          },
+        ],
+      },
+    ],
+  };
+
+  try {
+    await axios.post(webhookUrl, message);
+  } catch (error) {
+    console.error("Failed to send Discord notification:", error.message);
+  }
+}
 // --- LOGIC HELPER ---
 // function handleResponse(senderPsid, payload) {
 //   const data = content[payload] || content["GET_STARTED"];
