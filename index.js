@@ -12,41 +12,41 @@ const { PAGE_ACCESS_TOKEN, VERIFY_TOKEN, DISCORD_WEBHOOK_URL, PAGE_ID } =
 // --- YOUR DATA (THE BRAIN) ---
 const content = {
   GET_STARTED: {
-    text: "Welcome! How can I help you?",
+    text: "Тавтай морил! Танд хэрхэн туслах вэ?",
     buttons: [
-      { type: "postback", title: "Pricing", payload: "SHOW_PRICING" },
-      { type: "postback", title: "Hours", payload: "SHOW_HOURS" },
-      { type: "postback", title: "📞 Support", payload: "CONTACT_SUPPORT" },
+      { type: "postback", title: "Үнэ", payload: "SHOW_PRICING" },
+      { type: "postback", title: "Цагийн хуваарь", payload: "SHOW_HOURS" },
+      { type: "postback", title: "📞 Тусламж", payload: "CONTACT_SUPPORT" },
     ],
   },
   SHOW_PRICING: {
     text: "Basic: $10/mo, Pro: $25/mo.",
     buttons: [
-      { type: "postback", title: "Back to Menu", payload: "GET_STARTED" },
+      { type: "postback", title: "Үндсэн цэс", payload: "GET_STARTED" },
     ],
   },
   SHOW_HOURS: {
     text: "Mon-Fri, 9am - 5pm.",
     buttons: [
-      { type: "postback", title: "Back to Menu", payload: "GET_STARTED" },
+      { type: "postback", title: "Үндсэн цэс", payload: "GET_STARTED" },
     ],
   },
   CONTACT_SUPPORT: {
-    text: "You can reach our support team via phone or email.",
+    text: "Та манай тусламжийн багтай утсаар эсвэл имэйлээр холбогдож болно.",
     buttons: [
       {
         type: "phone_number",
-        title: "Call Us",
-        payload: "+15551234567",
+        title: "Утасдах",
+        payload: "+97699704407",
       },
       {
         type: "web_url",
-        title: "Email Us",
-        url: "mailto:support@example.com",
+        title: "Имэйл илгээх",
+        url: "mailto:mnafairy@gmail.com",
       },
       {
         type: "postback",
-        title: "Back to Menu",
+        title: "Үндсэн цэс",
         payload: "GET_STARTED",
       },
     ],
@@ -180,7 +180,7 @@ async function notifyAdmin(senderPsid) {
 
 // Keep app.listen for local testing
 if (process.env.NODE_ENV !== "production") {
-  app.listen(3000, () => console.log("Local server running"))   ;
+  app.listen(3000, () => console.log("Local server running"));
 }
 
 // Export for Vercel
