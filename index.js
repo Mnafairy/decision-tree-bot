@@ -9,144 +9,186 @@ app.use(bodyParser.json());
 const { PAGE_ACCESS_TOKEN, VERIFY_TOKEN, DISCORD_WEBHOOK_URL, PAGE_ID } =
   process.env;
 
+// --- QUICK REPLIES (Shown above message input) ---
+const defaultQuickReplies = [
+  { content_type: "text", title: "📚 Сургалтын хөтөлбөр", payload: "CURRICULUM" },
+  { content_type: "text", title: "💰 Төлбөр", payload: "TUITION" },
+  { content_type: "text", title: "📝 Элсэлт", payload: "ADMISSION" },
+  { content_type: "text", title: "📍 Хаяг байршил", payload: "LOCATION" },
+];
+
+const extendedQuickReplies = [
+  { content_type: "text", title: "🍽️ Хоол", payload: "SCHOOL_FOOD" },
+  { content_type: "text", title: "🚌 Автобус", payload: "SCHOOL_BUS" },
+  { content_type: "text", title: "☎️ Холбоо барих", payload: "CONTACT" },
+  { content_type: "text", title: "🏠 Үндсэн цэс", payload: "GET_STARTED" },
+];
+
+// --- CAROUSEL CARDS FOR MAIN MENU ---
+const mainMenuCarousel = [
+  {
+    title: "📚 Сургалтын хөтөлбөр",
+    subtitle: "Үндэсний болон олон улсын хөтөлбөр, 68 дугуйлан",
+    image_url: "https://images.unsplash.com/photo-1503676260728-1c00da094a0b?w=400&h=400&fit=crop",
+    buttons: [{ type: "postback", title: "Дэлгэрэнгүй", payload: "CURRICULUM" }],
+  },
+  {
+    title: "💰 Сургалтын төлбөр",
+    subtitle: "Бэлтгэл: 1.2сая₮, 1-12анги: 12.5сая₮",
+    image_url: "https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=400&h=400&fit=crop",
+    buttons: [{ type: "postback", title: "Дэлгэрэнгүй", payload: "TUITION" }],
+  },
+  {
+    title: "📝 Элсэлт",
+    subtitle: "Элсэлтийн бүртгэл, шаардлага",
+    image_url: "https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=400&h=400&fit=crop",
+    buttons: [{ type: "postback", title: "Дэлгэрэнгүй", payload: "ADMISSION" }],
+  },
+  {
+    title: "📍 Хаяг байршил",
+    subtitle: "2 байрны хаяг, газрын зураг",
+    image_url: "https://images.unsplash.com/photo-1580582932707-520aed937b7b?w=400&h=400&fit=crop",
+    buttons: [{ type: "postback", title: "Дэлгэрэнгүй", payload: "LOCATION" }],
+  },
+  {
+    title: "🍽️ Сургуулийн хоол",
+    subtitle: "Өдрийн хоолны үнэ: 10,000-12,000₮",
+    image_url: "https://images.unsplash.com/photo-1544025162-d76694265947?w=400&h=400&fit=crop",
+    buttons: [{ type: "postback", title: "Дэлгэрэнгүй", payload: "SCHOOL_FOOD" }],
+  },
+  {
+    title: "🚌 Сургуулийн автобус",
+    subtitle: "Чиглэл, төлбөр: 6,000-12,000₮",
+    image_url: "https://images.unsplash.com/photo-1570125909232-eb263c188f7e?w=400&h=400&fit=crop",
+    buttons: [{ type: "postback", title: "Дэлгэрэнгүй", payload: "SCHOOL_BUS" }],
+  },
+  {
+    title: "☎️ Холбоо барих",
+    subtitle: "Утас: 7575 5050, И-мэйл, Facebook",
+    image_url: "https://images.unsplash.com/photo-1423666639041-f56000c27a9a?w=400&h=400&fit=crop",
+    buttons: [{ type: "postback", title: "Дэлгэрэнгүй", payload: "CONTACT" }],
+  },
+  {
+    title: "🆘 Тусламж авах",
+    subtitle: "Манай багтай шууд холбогдох",
+    image_url: "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=400&h=400&fit=crop",
+    buttons: [{ type: "postback", title: "Холбогдох", payload: "CONTACT_SUPPORT" }],
+  },
+];
+
 // --- YOUR DATA (THE BRAIN) ---
 const content = {
   GET_STARTED: {
-    text: "Сайн байна уу. Та 'Оюунлаг сургууль'-тай холбогдлоо. Та доорх сонголтоос сонгож мэдээлэл авна уу!",
-    buttons: [
-      { type: "postback", title: "📚 Сургалтын хөтөлбөр", payload: "CURRICULUM" },
-      { type: "postback", title: "💰 Төлбөр", payload: "TUITION" },
-      { type: "postback", title: "➕ Бусад сонголт", payload: "MORE_OPTIONS" },
-    ],
-  },
-  MORE_OPTIONS: {
-    text: "Бусад мэдээлэл:\n\nТа сонирхож буй мэдээллээ доорх товчлуураас сонгоно уу.",
-    buttons: [
-      { type: "postback", title: "📝 Элсэлт", payload: "ADMISSION" },
-      { type: "postback", title: "📍 Хаяг байршил", payload: "LOCATION" },
-      { type: "postback", title: "➕ Цааш үзэх", payload: "MORE_OPTIONS_2" },
-    ],
-  },
-  MORE_OPTIONS_2: {
-    text: "Нэмэлт мэдээлэл:\n\nТа сонирхож буй мэдээллээ доорх товчлуураас сонгоно уу.",
-    buttons: [
-      { type: "postback", title: "🍽️ Сургуулийн хоол", payload: "SCHOOL_FOOD" },
-      { type: "postback", title: "🚌 Сургуулийн автобус", payload: "SCHOOL_BUS" },
-      { type: "postback", title: "☎️ Холбоо барих", payload: "CONTACT" },
-    ],
+    type: "carousel",
+    text: "Сайн байна у|у! Та 'Оюунлаг сургууль'-тай холбогдлоо.",
+    quickReplies: defaultQuickReplies,
   },
   CURRICULUM: {
-    text: "📖 Оюунлаг сургуулийн сургалтын хөтөлбөр (Товч хураангуй)\n\n🏛️ Үндэсний хөтөлбөр\n• Монгол Улсын цөм хөтөлбөрийг бүх түвшинд бүрэн хэрэгжүүлдэг.\n\n🌍 Олон улсын хөтөлбөр - Pearson Edexcel\n• English /1-р ангиас /\n• Бага, сууриь, бүрэн дунд боловсролд Английн олон улсын хөтөлбөрийг хэрэгжүүлдэг.\n• iPrimary, iLowerSecondary, IGCSE, A Level түвшнүүдтэй.\n\n🚀 Сургуулийн дотоод хөтөлбөр\n• STEAM\n• Smart Math\n• AR/VR технологи\n• Хятад хэл /5-р ангиас /\n• Информатик\n• График дизайн\n• SAT, IELTS, TOEFL-ийн бэлтгэл хичээлүүд\n🧠 Нийгмийн хөгжил\n• 'Positive Action Second Step' хөтөлбөрөөр сурагчдын ёс зүй, харилцаа, сэтгэлзүйн хөгжилд анхаардаг.\n• 🎭🎨🎵 68 нэр төрлийн дугуйлан үнэ төлбөргүй хичээллэнэ! ✨\n\n🎯 Зорилго\n• Үндэсний болон олон улсын тавцанд өрсөлдөх чадвартай, бүтээлч сэтгэлгээтэй, ёс зүйтэй, олон талт чадвартай иргэн бэлтгэх.",
-    buttons: [
-      { type: "postback", title: "💰 Төлбөр", payload: "TUITION" },
-      { type: "postback", title: "🍽️ Хоол", payload: "SCHOOL_FOOD" },
-      { type: "postback", title: "🏠 Буцах", payload: "GET_STARTED" },
+    type: "text_with_quick_replies",
+    text: "📖 Оюунлаг сургуулийн хөтөлбөр\n\n🏛️ Үндэсний хөтөлбөр\n• МУ-ын цөм хөтөлбөр бүрэн хэрэгжүүлдэг\n\n🌍 Олон улсын - Pearson Edexcel\n• iPrimary, iLowerSecondary, IGCSE, A Level\n\n🚀 Дотоод хөтөлбөр\n• STEAM, Smart Math, AR/VR\n• Хятад хэл, Информатик, Дизайн\n• SAT, IELTS, TOEFL бэлтгэл\n\n🧠 Нийгмийн хөгжил\n• Positive Action Second Step\n\n🎭🎨🎵 68 дугуйлан ҮНЭГҮЙ!",
+    quickReplies: [
+      { content_type: "text", title: "💰 Төлбөр", payload: "TUITION" },
+      { content_type: "text", title: "📝 Элсэлт", payload: "ADMISSION" },
+      { content_type: "text", title: "🌐 Вэбсайт", payload: "WEBSITE" },
+      { content_type: "text", title: "🏠 Үндсэн цэс", payload: "GET_STARTED" },
     ],
   },
   ADMISSION: {
-    text: "📝 Элсэлтийн мэдээлэл\n\nОюунлаг сургуульд элсэх тухай дэлгэрэнгүй мэдээллийг манай вэбсайт болон холбоо барих хэсгээс авна уу.\n\nТа элсэлтийн талаар асуух зүйл байвал 'Холбоо барих' хэсгээс шууд холбогдоно уу.",
+    type: "button",
+    text: "📝 Элсэлтийн мэдээлэл\n\nОюунлаг сургуульд элсэх тухай дэлгэрэнгүй мэдээллийг манай вэбсайтаас авна уу.\n\nАсуух зүйл байвал холбогдоно уу!",
     buttons: [
-      {
-        type: "web_url",
-        title: "🌐 Вэбсайт",
-        url: "http://www.oyunlag.edu.mn",
-      },
+      { type: "web_url", title: "🌐 Вэбсайт", url: "http://www.oyunlag.edu.mn" },
       { type: "postback", title: "☎️ Холбоо барих", payload: "CONTACT" },
       { type: "postback", title: "🏠 Буцах", payload: "GET_STARTED" },
     ],
+    quickReplies: extendedQuickReplies,
   },
   TUITION: {
-    text: "💰 Сургалтын төлбөр\n\n2025-2026 оны 1-р ангид элсэн сурах сурагчдын Бэлтгэл ангийн сургалтын төлбөр:\n💵 1,200,000₮\n\n2025-2026 оны хичээлийн жилийн 1-12-р ангийн сургалтын төлбөр:\n💵 12,500,000₮\n\n🎭🎨🎵 68 нэр төрлийн дугуйлан үнэ төлбөргүй хичээллэнэ! 🎪✨",
-    buttons: [
-      { type: "postback", title: "📚 Сургалтын хөтөлбөр", payload: "CURRICULUM" },
-      { type: "postback", title: "🍽️ Хоол", payload: "SCHOOL_FOOD" },
-      { type: "postback", title: "🏠 Буцах", payload: "GET_STARTED" },
+    type: "text_with_quick_replies",
+    text: "💰 Сургалтын төлбөр 2025-2026\n\n📚 Бэлтгэл ангийн төлбөр:\n💵 1,200,000₮\n\n📚 1-12-р ангийн төлбөр:\n💵 12,500,000₮\n\n🎭🎨🎵 68 төрлийн дугуйлан ҮНЭГҮЙ! ✨",
+    quickReplies: [
+      { content_type: "text", title: "📚 Хөтөлбөр", payload: "CURRICULUM" },
+      { content_type: "text", title: "🍽️ Хоол", payload: "SCHOOL_FOOD" },
+      { content_type: "text", title: "🚌 Автобус", payload: "SCHOOL_BUS" },
+      { content_type: "text", title: "🏠 Үндсэн цэс", payload: "GET_STARTED" },
     ],
   },
   SCHOOL_FOOD: {
-    text: "🍽️ Сургуулийн өдрийн хоолны үнэ 🍴✨\n\n🥗 Бага анги: 10,000₮ 🧒\n🍕 Дунд анги: 11,000₮ 🧑\n🍕🥗 Ахлах анги: 12,000₮ 🧑\n\nХоолны цэсийн мэдээлэл авах бол доорх холбоосоор орно уу.\nhttp://www.oyunlag.edu.mn",
-    buttons: [
-      { type: "postback", title: "🚌 Автобус", payload: "SCHOOL_BUS" },
-      { type: "postback", title: "☎️ Холбоо барих", payload: "CONTACT" },
-      { type: "postback", title: "🏠 Буцах", payload: "GET_STARTED" },
+    type: "text_with_quick_replies",
+    text: "🍽️ Сургуулийн хоолны үнэ\n\n🥗 Бага анги: 10,000₮\n🍕 Дунд анги: 11,000₮\n🍕🥗 Ахлах анги: 12,000₮\n\nЦэсийн мэдээллийг вэбсайтаас авна уу.",
+    quickReplies: [
+      { content_type: "text", title: "🚌 Автобус", payload: "SCHOOL_BUS" },
+      { content_type: "text", title: "💰 Төлбөр", payload: "TUITION" },
+      { content_type: "text", title: "☎️ Холбоо барих", payload: "CONTACT" },
+      { content_type: "text", title: "🏠 Үндсэн цэс", payload: "GET_STARTED" },
     ],
   },
   SCHOOL_BUS: {
-    text: "🚌 Оюунлаг сургуулийн сурагчдад зориулсан автобусны үйлчилгээ 🚍🚎\n\n📅 2021 оноос эхлэн 'Нью Армстронг' ХХК хариуцан явуулж байна.\n\n👨‍👩‍👧 Хамрагдах боломжтой сурагчид: 2-12-р анги ✅\n(1-р ангийн сурагчид хамрагдах боломжгүй ⛔)\n\n💰 Төлбөр:\n💵 1 талдаа: Өдрийн 6,000₮\n💵 2 талдаа: Өдрийн 12,000₮\n🔑 Төлбөрийг тухайн хичээлийн жилийн улирлаар урьдчилан төлнө.\n\n🌅 Сурагчдыг гэрээс авах цаг: Байршлаас хамаарч 07:00-07:30 хооронд\n🏫 Сургуулиас хөдлөх цаг: 15:40 ⏰\n\nЧиглэлийн мэдээлэл авах бол доорх холбоосоор орно уу.",
-    buttons: [
-      {
-        type: "web_url",
-        title: "🌐 Дэлгэрэнгүй",
-        url: "http://www.oyunlag.edu.mn",
-      },
-      { type: "postback", title: "💰 Төлбөр", payload: "TUITION" },
-      { type: "postback", title: "🏠 Буцах", payload: "GET_STARTED" },
+    type: "text_with_quick_replies",
+    text: "🚌 Автобусны үйлчилгээ\n\n📅 'Нью Армстронг' ХХК хариуцдаг\n\n👨‍👩‍👧 2-12-р анги ✅ (1-р анги ⛔)\n\n💰 Төлбөр:\n• 1 талдаа: 6,000₮/өдөр\n• 2 талдаа: 12,000₮/өдөр\n\n⏰ Авах: 07:00-07:30\n🏫 Хүргэх: 15:40",
+    quickReplies: [
+      { content_type: "text", title: "💰 Төлбөр", payload: "TUITION" },
+      { content_type: "text", title: "🍽️ Хоол", payload: "SCHOOL_FOOD" },
+      { content_type: "text", title: "📍 Байршил", payload: "LOCATION" },
+      { content_type: "text", title: "🏠 Үндсэн цэс", payload: "GET_STARTED" },
     ],
   },
   LOCATION: {
-    text: "📍 Хаяг байршил\n\nОюунлаг сургууль 2 байр дээр үйл ажиллагаа явуулдаг. Дэлгэрэнгүй мэдээллийг доорх товчлуураас сонгоно уу:",
+    type: "button",
+    text: "📍 Хаяг байршил\n\nОюунлаг сургууль 2 байртай:",
     buttons: [
       { type: "postback", title: "🏢 1-р байр", payload: "LOCATION_1" },
       { type: "postback", title: "🏢 2-р байр", payload: "LOCATION_2" },
       { type: "postback", title: "🏠 Буцах", payload: "GET_STARTED" },
     ],
+    quickReplies: extendedQuickReplies,
   },
   LOCATION_1: {
-    text: "🏢 Сургуулийн нэг дүгээр байр\n\n📍 Хичээлийн 1-р байр:\nБЗДҮүрэг 15-р хороо, 13-р хороолол, 43-3, Бөхийн өргөөний зүүн урд Оюунлаг сургууль\n\n🌐 Вэбсайт: www.oyunlag.edu.mn\n📱 Утас: 7575 5050",
+    type: "button",
+    text: "🏢 1-р байр\n\n📍 БЗД 15-р хороо, 13-р хороолол, 43-3\nБөхийн өргөөний зүүн урд\n\n📱 7575 5050",
     buttons: [
-      {
-        type: "web_url",
-        title: "🗺️ Google Maps",
-        url: "https://maps.google.com/?q=Oyunlag+School+Building+1+Ulaanbaatar",
-      },
-      {
-        type: "web_url",
-        title: "🌐 Вэбсайт",
-        url: "http://www.oyunlag.edu.mn",
-      },
+      { type: "web_url", title: "🗺️ Google Maps", url: "https://maps.google.com/?q=Oyunlag+School+Building+1+Ulaanbaatar" },
+      { type: "web_url", title: "🌐 Вэбсайт", url: "http://www.oyunlag.edu.mn" },
       { type: "postback", title: "◀️ Буцах", payload: "LOCATION" },
     ],
   },
   LOCATION_2: {
-    text: "🏢 Сургуулийн хоёр дугаар байр\n\n📍 Хичээлийн 2-р байр:\nБЗДҮүрэг 18-р хороо, 13-р хороолол 47/1\n\n🌐 Вэбсайт: www.oyunlag.edu.mn\n📱 Утас: 7575 5050",
+    type: "button",
+    text: "🏢 2-р байр\n\n📍 БЗД 18-р хороо, 13-р хороолол 47/1\n\n📱 7575 5050",
     buttons: [
-      {
-        type: "web_url",
-        title: "🗺️ Google Maps",
-        url: "https://maps.google.com/?q=Oyunlag+School+Building+2+Ulaanbaatar",
-      },
-      {
-        type: "web_url",
-        title: "🌐 Вэбсайт",
-        url: "http://www.oyunlag.edu.mn",
-      },
+      { type: "web_url", title: "🗺️ Google Maps", url: "https://maps.google.com/?q=Oyunlag+School+Building+2+Ulaanbaatar" },
+      { type: "web_url", title: "🌐 Вэбсайт", url: "http://www.oyunlag.edu.mn" },
       { type: "postback", title: "◀️ Буцах", payload: "LOCATION" },
     ],
   },
   CONTACT: {
-    text: "☎️ Холбоо барих\n\n📞 Утас: 7575 5050\n📱 88113096, 88113097\n🌐 Вэбсайт: www.oyunlag.edu.mn\n📧 И-мэйл: info@oyunlag.edu.mn\n📘 Facebook: facebook.com/oyunlag.edu.mn\n\nТанд туслахад бэлэн байна!",
+    type: "button",
+    text: "☎️ Холбоо барих\n\n📞 7575 5050\n📱 88113096, 88113097\n🌐 www.oyunlag.edu.mn\n📧 info@oyunlag.edu.mn",
     buttons: [
-      {
-        type: "phone_number",
-        title: "📞 Залгах",
-        payload: "+97675755050",
-      },
-      {
-        type: "web_url",
-        title: "🌐 Вэбсайт",
-        url: "http://www.oyunlag.edu.mn",
-      },
-      {
-        type: "web_url",
-        title: "📘 Facebook",
-        url: "https://www.facebook.com/oyunlag.edu.mn",
-      },
+      { type: "phone_number", title: "📞 Залгах", payload: "+97675755050" },
+      { type: "web_url", title: "🌐 Вэбсайт", url: "http://www.oyunlag.edu.mn" },
+      { type: "web_url", title: "📘 Facebook", url: "https://www.facebook.com/oyunlag.edu.mn" },
+    ],
+    quickReplies: [
+      { content_type: "text", title: "🆘 Тусламж", payload: "CONTACT_SUPPORT" },
+      { content_type: "text", title: "📍 Байршил", payload: "LOCATION" },
+      { content_type: "text", title: "🏠 Үндсэн цэс", payload: "GET_STARTED" },
     ],
   },
   CONTACT_SUPPORT: {
-    text: "👋 Та манай багтай шууд холбогдох хүсэлтээ илгээлээ. Манай зөвлөх танд удахгүй хариу өгөх болно.\n\nХүсвэл доорх холбоо барих хэсгээс шууд холбогдож болно.",
+    type: "text_with_quick_replies",
+    text: "👋 Та манай багтай холбогдох хүсэлт илгээлээ.\n\nМанай зөвлөх танд удахгүй хариу өгнө!",
+    quickReplies: [
+      { content_type: "text", title: "☎️ Холбоо барих", payload: "CONTACT" },
+      { content_type: "text", title: "📍 Байршил", payload: "LOCATION" },
+      { content_type: "text", title: "🏠 Үндсэн цэс", payload: "GET_STARTED" },
+    ],
+  },
+  WEBSITE: {
+    type: "button",
+    text: "🌐 Оюунлаг сургуулийн вэбсайт:",
     buttons: [
-      { type: "postback", title: "☎️ Холбоо барих", payload: "CONTACT" },
+      { type: "web_url", title: "🌐 Вэбсайт нээх", url: "http://www.oyunlag.edu.mn" },
       { type: "postback", title: "🏠 Буцах", payload: "GET_STARTED" },
     ],
   },
@@ -168,14 +210,12 @@ app.get("/webhook", (req, res) => {
   }
 });
 
-// --- MESSAGE HANDLER (FIXED) ---
+// --- MESSAGE HANDLER ---
 app.post("/webhook", async (req, res) => {
   let body = req.body;
 
   if (body.object === "page") {
-    // SINGLE LOOP to prevent double replies
     for (const entry of body.entry) {
-      // Get the message event
       let webhook_event = entry.messaging[0];
       let sender_psid = webhook_event.sender.id;
 
@@ -183,24 +223,33 @@ app.post("/webhook", async (req, res) => {
       if (webhook_event.postback) {
         const payload = webhook_event.postback.payload;
 
-        // Notification Check
         if (payload === "CONTACT_SUPPORT") {
-          notifyAdmin(sender_psid); // Send alert silently
+          notifyAdmin(sender_psid);
         }
 
         await handleResponse(sender_psid, payload);
       }
 
-      // 2. Handle TYPED TEXT (Message)
+      // 2. Handle QUICK REPLY clicks
+      else if (webhook_event.message && webhook_event.message.quick_reply) {
+        const payload = webhook_event.message.quick_reply.payload;
+
+        if (payload === "CONTACT_SUPPORT") {
+          notifyAdmin(sender_psid);
+        }
+
+        await handleResponse(sender_psid, payload);
+      }
+
+      // 3. Handle TYPED TEXT (Message)
       else if (webhook_event.message && webhook_event.message.text) {
         const text = webhook_event.message.text.toLowerCase();
 
-        // STRICT FILTER: Only answer if they say specific words (Mongolian & English)
+        // Check for specific keywords
         if (
           text.includes("hi") ||
           text.includes("hello") ||
           text.includes("сайн") ||
-          text.includes("сайн байна уу") ||
           text.includes("сайнуу") ||
           text.includes("menu") ||
           text.includes("цэс") ||
@@ -210,7 +259,29 @@ app.post("/webhook", async (req, res) => {
         ) {
           await handleResponse(sender_psid, "GET_STARTED");
         }
-        // If they type anything else, we do NOTHING (so you can reply manually)
+        // Keyword shortcuts for quick navigation
+        else if (text.includes("төлбөр") || text.includes("үнэ")) {
+          await handleResponse(sender_psid, "TUITION");
+        }
+        else if (text.includes("хөтөлбөр") || text.includes("сургалт")) {
+          await handleResponse(sender_psid, "CURRICULUM");
+        }
+        else if (text.includes("элсэлт") || text.includes("бүртгэл")) {
+          await handleResponse(sender_psid, "ADMISSION");
+        }
+        else if (text.includes("хаяг") || text.includes("байршил") || text.includes("газар")) {
+          await handleResponse(sender_psid, "LOCATION");
+        }
+        else if (text.includes("хоол") || text.includes("хоолны")) {
+          await handleResponse(sender_psid, "SCHOOL_FOOD");
+        }
+        else if (text.includes("автобус") || text.includes("bus")) {
+          await handleResponse(sender_psid, "SCHOOL_BUS");
+        }
+        else if (text.includes("холбоо") || text.includes("утас") || text.includes("contact")) {
+          await handleResponse(sender_psid, "CONTACT");
+        }
+        // If no keywords match, do nothing (so admin can reply manually)
       }
     }
 
@@ -220,30 +291,95 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// --- LOGIC HELPER ---
+// --- RESPONSE HANDLER ---
 async function handleResponse(senderPsid, payload) {
   const data = content[payload] || content["GET_STARTED"];
 
-  const response = {
+  // Handle different response types
+  switch (data.type) {
+    case "carousel":
+      // First send greeting text
+      await sendTextWithQuickReplies(senderPsid, data.text, data.quickReplies);
+      // Then send carousel
+      await sendCarousel(senderPsid, mainMenuCarousel);
+      break;
+
+    case "text_with_quick_replies":
+      await sendTextWithQuickReplies(senderPsid, data.text, data.quickReplies);
+      break;
+
+    case "button":
+      await sendButtonTemplate(senderPsid, data.text, data.buttons, data.quickReplies);
+      break;
+
+    default:
+      // Fallback to button template
+      await sendButtonTemplate(senderPsid, data.text, data.buttons, data.quickReplies);
+  }
+}
+
+// --- SEND TEXT WITH QUICK REPLIES ---
+async function sendTextWithQuickReplies(senderPsid, text, quickReplies) {
+  const message = {
+    text: text,
+  };
+
+  if (quickReplies && quickReplies.length > 0) {
+    message.quick_replies = quickReplies;
+  }
+
+  await callSendAPI(senderPsid, message);
+}
+
+// --- SEND CAROUSEL (Generic Template) ---
+async function sendCarousel(senderPsid, cards) {
+  const message = {
     attachment: {
       type: "template",
       payload: {
-        template_type: "button",
-        text: data.text,
-        buttons: data.buttons,
+        template_type: "generic",
+        elements: cards.map(card => ({
+          title: card.title,
+          subtitle: card.subtitle,
+          image_url: card.image_url,
+          buttons: card.buttons,
+        })),
       },
     },
   };
 
-  await callSendAPI(senderPsid, response);
+  await callSendAPI(senderPsid, message);
+}
+
+// --- SEND BUTTON TEMPLATE ---
+async function sendButtonTemplate(senderPsid, text, buttons, quickReplies) {
+  const message = {
+    attachment: {
+      type: "template",
+      payload: {
+        template_type: "button",
+        text: text,
+        buttons: buttons,
+      },
+    },
+  };
+
+  // Note: Quick replies can't be sent with button template in same message
+  // So we send button template first, then quick replies in separate message if needed
+  await callSendAPI(senderPsid, message);
+
+  // If quick replies are specified, send them in a follow-up message
+  if (quickReplies && quickReplies.length > 0) {
+    await sendTextWithQuickReplies(senderPsid, "Та доорх сонголтоос сонгоно уу:", quickReplies);
+  }
 }
 
 // --- SEND API ---
-async function callSendAPI(senderPsid, response) {
+async function callSendAPI(senderPsid, message) {
   try {
     await axios.post(
       `https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-      { recipient: { id: senderPsid }, message: response }
+      { recipient: { id: senderPsid }, message: message }
     );
   } catch (error) {
     console.error(
@@ -266,7 +402,7 @@ async function notifyAdmin(senderPsid) {
       {
         title: "🚨 Шинэ тусламжийн хүсэлт - Оюунлаг сургууль",
         description: `Хэрэглэгч (PSID: ${senderPsid}) тусламж хүссэн байна.`,
-        color: 3447003, // Blue color
+        color: 3447003,
         fields: [
           {
             name: "Үйлдэл шаардлагатай",
@@ -287,7 +423,7 @@ async function notifyAdmin(senderPsid) {
 
 // Keep app.listen for local testing
 if (process.env.NODE_ENV !== "production") {
-  app.listen(3000, () => console.log("Local server running"));
+  app.listen(3000, () => console.log("Local server running on port 3000"));
 }
 
 // Export for Vercel
