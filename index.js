@@ -67,7 +67,21 @@ app.get("/webhook", (req, res) => {
     }
   }
 });
+// --- NOTIFICATION SYSTEM ---
+async function notifyAdmin(senderPsid) {
+  const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+  if (!webhookUrl) return;
 
+  const message = {
+    content: `🚨 **Support Request!**\nUser (PSID: ${senderPsid}) just clicked "Contact Support".`,
+  };
+
+  try {
+    await axios.post(webhookUrl, message);
+  } catch (error) {
+    console.error("Failed to send Discord notification:", error.message);
+  }
+}
 // --- MESSAGE HANDLER ---
 // app.post("/webhook", (req, res) => {
 //   let body = req.body;
@@ -91,7 +105,24 @@ app.get("/webhook", (req, res) => {
 app.post("/webhook", async (req, res) => {
   // Notice 'async' here
   let body = req.body;
+  // Inside app.post('/webhook')...
+  for (const entry of body.entry) {
+    let webhook_event = entry.messaging[0];
+    let sender_psid = webhook_event.sender.id;
 
+    if (webhook_event.postback) {
+      const payload = webhook_event.postback.payload;
+
+      // CHECK IF IT IS A SUPPORT REQUEST
+      if (payload === "CONTACT_SUPPORT") {
+        // Send notification silently in background (don't await, so user gets reply fast)
+        notifyAdmin(sender_psid);
+      }
+
+      await handleResponse(sender_psid, payload);
+    }
+    // ... existing code ...
+  }
   if (body.object === "page") {
     // 1. We must wait for the loop to finish
     // We use Promise.all to handle multiple entries at once
