@@ -113,10 +113,13 @@ function isAdminMode(psid) {
 // --- GEMINI AI INTEGRATION ---
 async function getGeminiResponse(userMessage, userLanguage = 'mn') {
   if (!geminiModel) {
+    console.log("⚠️ Gemini AI not configured - GEMINI_API_KEY missing");
     return null; // Gemini not configured
   }
 
   try {
+    console.log(`🤖 Gemini AI request: "${userMessage}" (lang: ${userLanguage})`);
+
     // System prompt with guardrails and school context
     const systemPrompt = `You are an AI assistant for Oyunlag School in Ulaanbaatar, Mongolia.
 
@@ -151,9 +154,11 @@ Now answer this user question:
     const response = await result.response;
     const text = response.text();
 
+    console.log(`✅ Gemini AI response: "${text.substring(0, 100)}..."`);
     return text.trim();
   } catch (error) {
-    console.error("Gemini AI Error:", error.message);
+    console.error("❌ Gemini AI Error:", error.message);
+    console.error("Error details:", error);
     return null;
   }
 }
@@ -252,35 +257,48 @@ async function trackFAQFeedback(psid, faqId, helpful) {
 
 // Get user profile from Facebook
 async function getUserProfile(psid) {
-  if (!PAGE_ACCESS_TOKEN) return null;
+  if (!PAGE_ACCESS_TOKEN) {
+    console.log("⚠️ PAGE_ACCESS_TOKEN not configured, cannot fetch user profile");
+    return null;
+  }
 
   try {
+    console.log(`📱 Fetching Facebook profile for PSID: ${psid}`);
     const response = await axios.get(
       `https://graph.facebook.com/v21.0/${psid}?fields=first_name,last_name,profile_pic&access_token=${PAGE_ACCESS_TOKEN}`
     );
+    console.log(`✅ Facebook profile fetched: ${response.data.first_name} ${response.data.last_name}`);
     return response.data;
   } catch (error) {
-    console.error("Error fetching user profile:", error.message);
+    console.error("❌ Error fetching user profile:", error.message);
+    if (error.response) {
+      console.error("Facebook API error:", error.response.data);
+    }
     return null;
   }
 }
 
 // Get or create user data in Firebase
 async function getUserData(psid) {
-  if (!db) return null;
+  if (!db) {
+    console.log("⚠️ Firebase not configured, cannot get user data");
+    return null;
+  }
 
   try {
     const userRef = db.ref(`users/${psid}`);
     const snapshot = await userRef.once('value');
 
     if (snapshot.exists()) {
+      console.log(`✅ User data found in Firebase for PSID: ${psid}`);
       return snapshot.val();
     } else {
       // Create new user profile
+      console.log(`📝 Creating new user profile for PSID: ${psid}`);
       const profile = await getUserProfile(psid);
       const newUser = {
         psid: psid,
-        firstName: profile?.first_name || "User",
+        firstName: profile?.first_name || "Хэрэглэгч",
         lastName: profile?.last_name || "",
         profilePic: profile?.profile_pic || "",
         createdAt: Date.now(),
@@ -300,10 +318,11 @@ async function getUserData(psid) {
       };
 
       await userRef.set(newUser);
+      console.log(`✅ New user created: ${newUser.firstName}`);
       return newUser;
     }
   } catch (error) {
-    console.error("Error getting user data:", error.message);
+    console.error("❌ Error getting user data:", error.message);
     return null;
   }
 }
@@ -352,32 +371,44 @@ async function trackInquiry(psid, topic, method = 'menu') {
 
 // Get personalized greeting
 async function getPersonalizedGreeting(psid) {
-  const userData = await getUserData(psid);
-  if (!userData) return "Сайн байна уу!";
+  try {
+    console.log(`📝 Getting personalized greeting for PSID: ${psid}`);
+    const userData = await getUserData(psid);
 
-  const firstName = userData.firstName;
-  const inquiries = userData.inquiries || [];
-  const lastInquiry = inquiries[inquiries.length - 1];
-
-  // If user has previous inquiries
-  if (lastInquiry) {
-    const topicNames = {
-      CURRICULUM: "хөтөлбөрийн",
-      TUITION: "төлбөрийн",
-      ADMISSION: "элсэлтийн",
-      LOCATION: "байршлын",
-      SCHOOL_FOOD: "хоолны",
-      SCHOOL_BUS: "автобусны",
-    };
-
-    const topicName = topicNames[lastInquiry.topic] || "";
-
-    if (topicName) {
-      return `Сайн байна уу ${firstName}! 👋 Та өмнө ${topicName} талаар асуусан байсан. Өнөөдөр юугаар тусалж чадах вэ?`;
+    if (!userData) {
+      console.log("⚠️ No user data found, using default greeting");
+      return "Сайн байна уу! 👋 Оюунлаг сургуулийн мэдээллийн бот-д тавтай морил!";
     }
-  }
 
-  return `Сайн байна уу ${firstName}! 👋 Оюунлаг сургуулийн мэдээллийн бот-д тавтай морил!`;
+    const firstName = userData.firstName || "Хэрэглэгч";
+    console.log(`✅ User found: ${firstName}`);
+
+    const inquiries = userData.inquiries || [];
+    const lastInquiry = inquiries[inquiries.length - 1];
+
+    // If user has previous inquiries
+    if (lastInquiry) {
+      const topicNames = {
+        CURRICULUM: "хөтөлбөрийн",
+        TUITION: "төлбөрийн",
+        ADMISSION: "элсэлтийн",
+        LOCATION: "байршлын",
+        SCHOOL_FOOD: "хоолны",
+        SCHOOL_BUS: "автобусны",
+      };
+
+      const topicName = topicNames[lastInquiry.topic] || "";
+
+      if (topicName) {
+        return `Сайн байна уу ${firstName}! 👋 Та өмнө ${topicName} талаар асуусан байсан. Өнөөдөр юугаар тусалж чадах вэ?`;
+      }
+    }
+
+    return `Сайн байна уу ${firstName}! 👋 Оюунлаг сургуулийн мэдээллийн бот-д тавтай морил!`;
+  } catch (error) {
+    console.error("❌ Error in getPersonalizedGreeting:", error.message);
+    return "Сайн байна уу! 👋 Оюунлаг сургуулийн мэдээллийн бот-д тавтай морил!";
+  }
 }
 
 // --- QUICK REPLIES (Shown above message input) ---
@@ -733,6 +764,22 @@ app.post("/webhook", async (req, res) => {
       else if (webhook_event.message && webhook_event.message.quick_reply) {
         const payload = webhook_event.message.quick_reply.payload;
 
+        // Handle FAQ feedback
+        if (payload.startsWith("FAQ_HELPFUL_") || payload.startsWith("FAQ_NOT_HELPFUL_")) {
+          const isHelpful = payload.startsWith("FAQ_HELPFUL_");
+          const faqId = payload.replace("FAQ_HELPFUL_", "").replace("FAQ_NOT_HELPFUL_", "");
+
+          await trackFAQFeedback(sender_psid, faqId, isHelpful);
+
+          const thankYouMessage = isHelpful
+            ? "Баярлалаа! 😊 Бид танд туслаж чадсандаа баяртай байна."
+            : "Уучлаарай. Илүү сайн мэдээлэл авахыг хүсвэл манай багтай холбогдоно уу: 7575 5050";
+
+          await sendTextWithQuickReplies(sender_psid, thankYouMessage, defaultQuickReplies);
+          res.status(200).send("EVENT_RECEIVED");
+          continue;
+        }
+
         if (payload === "CONTACT_SUPPORT") {
           notifyAdmin(sender_psid);
           setAdminMode(sender_psid);
@@ -756,16 +803,16 @@ app.post("/webhook", async (req, res) => {
         const text = webhook_event.message.text.toLowerCase();
         const originalText = webhook_event.message.text;
 
-        // Skip bot response if in admin mode
-        if (isAdminMode(sender_psid)) {
+        // Check for bot re-enable command FIRST (before admin mode check)
+        if (text.includes("enable bot") || text.includes("бот асаа") || text.includes("bot") || text.includes("асаа")) {
+          setBotMode(sender_psid);
+          await sendTextWithQuickReplies(sender_psid, "✅ Бот дахин идэвхтэй боллоо!", defaultQuickReplies);
           res.status(200).send("EVENT_RECEIVED");
           continue;
         }
 
-        // Check for bot re-enable command
-        if (text.includes("enable bot") || text.includes("бот асаа")) {
-          setBotMode(sender_psid);
-          await sendTextWithQuickReplies(sender_psid, "✅ Бот дахин идэвхтэй боллоо!", defaultQuickReplies);
+        // Skip bot response if in admin mode
+        if (isAdminMode(sender_psid)) {
           res.status(200).send("EVENT_RECEIVED");
           continue;
         }
