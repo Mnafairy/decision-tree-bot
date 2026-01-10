@@ -2,12 +2,117 @@ require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const axios = require("axios");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const app = express();
 app.use(bodyParser.json());
 
-const { PAGE_ACCESS_TOKEN, VERIFY_TOKEN, DISCORD_WEBHOOK_URL, PAGE_ID } =
+const { PAGE_ACCESS_TOKEN, VERIFY_TOKEN, DISCORD_WEBHOOK_URL, PAGE_ID, GEMINI_API_KEY } =
   process.env;
+
+// Initialize Gemini AI
+const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
+const geminiModel = genAI ? genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" }) : null;
+
+// --- CONVERSATION STATE MANAGEMENT ---
+// Tracks which conversations are in admin mode (bot disabled)
+const conversationStates = new Map();
+
+// Conversation state structure:
+// {
+//   psid: {
+//     mode: 'bot' | 'admin',        // Current conversation mode
+//     lastBotMessage: timestamp,     // Last time bot sent message
+//     lastUserMessage: timestamp,    // Last time user sent message
+//     adminTakeoverTime: timestamp,  // When admin took over
+//   }
+// }
+
+function getConversationState(psid) {
+  if (!conversationStates.has(psid)) {
+    conversationStates.set(psid, {
+      mode: 'bot',
+      lastBotMessage: null,
+      lastUserMessage: Date.now(),
+      adminTakeoverTime: null,
+    });
+  }
+  return conversationStates.get(psid);
+}
+
+function setAdminMode(psid) {
+  const state = getConversationState(psid);
+  state.mode = 'admin';
+  state.adminTakeoverTime = Date.now();
+  conversationStates.set(psid, state);
+}
+
+function setBotMode(psid) {
+  const state = getConversationState(psid);
+  state.mode = 'bot';
+  state.adminTakeoverTime = null;
+  conversationStates.set(psid, state);
+}
+
+function isAdminMode(psid) {
+  const state = getConversationState(psid);
+  return state.mode === 'admin';
+}
+
+// --- GEMINI AI INTEGRATION ---
+async function getGeminiResponse(userMessage, userLanguage = 'mn') {
+  if (!geminiModel) {
+    return null; // Gemini not configured
+  }
+
+  try {
+    // System prompt with guardrails and school context
+    const systemPrompt = `You are an AI assistant for Oyunlag School in Ulaanbaatar, Mongolia.
+
+IMPORTANT RULES:
+1. ALWAYS respond in ${userLanguage === 'en' ? 'English' : 'Mongolian'} language
+2. Be professional but friendly - use emojis sparingly (🏫, 📚, ✅)
+3. Keep responses SHORT and CONCISE (2-4 sentences max) - users are on mobile
+4. NEVER invent information - if you don't know, say "Би тэр мэдээлэлтэй танил биш байна. Манай багтай холбогдоно уу: 7575 5050"
+5. ONLY answer questions about Oyunlag School
+6. If question is off-topic (weather, jokes, unrelated topics), politely redirect: "Би Оюунлаг сургуулийн мэдээллээр тусламж үзүүлдэг. Манай хөтөлбөр, төлбөр, элсэлтийн талаар асуугаарай 📚"
+7. If user is rude or inappropriate, respond politely: "Би танд хүндэтгэлтэйгээр тусламж үзүүлэхэд бэлэн байна. Хэрхэн тусалж чадах вэ?"
+
+SCHOOL INFORMATION YOU CAN USE:
+- Tuition: Prep 1,200,000₮, Grades 1-12: 12,500,000₮
+- 68 clubs FREE
+- Food: 10,000-12,000₮/day
+- Bus: 6,000₮ (one-way), 12,000₮ (round-trip)
+- Contact: 7575 5050, info@oyunlag.edu.mn, www.oyunlag.edu.mn
+- Location: 2 buildings in БЗД district
+- Curriculum: National + International (Pearson Edexcel), STEAM, IELTS/TOEFL prep
+- Provider: Нью Армстронг ХХК for bus service
+
+For ENROLLMENT/ADMISSION questions:
+- Say requirements are on the website (www.oyunlag.edu.mn)
+- Suggest they visit in person or call 7575 5050
+- Don't make up requirements
+
+Now answer this user question:
+"${userMessage}"`;
+
+    const result = await geminiModel.generateContent(systemPrompt);
+    const response = await result.response;
+    const text = response.text();
+
+    return text.trim();
+  } catch (error) {
+    console.error("Gemini AI Error:", error.message);
+    return null;
+  }
+}
+
+// Detect language from user message
+function detectLanguage(text) {
+  // Simple heuristic: if contains Cyrillic, it's Mongolian
+  const cyrillicPattern = /[\u0400-\u04FF]/;
+  return cyrillicPattern.test(text) ? 'mn' : 'en';
+}
 
 // --- QUICK REPLIES (Shown above message input) ---
 const defaultQuickReplies = [
@@ -219,12 +324,35 @@ app.post("/webhook", async (req, res) => {
       let webhook_event = entry.messaging[0];
       let sender_psid = webhook_event.sender.id;
 
+      // Update last user message timestamp
+      const state = getConversationState(sender_psid);
+      state.lastUserMessage = Date.now();
+
       // 1. Handle BUTTON CLICKS (Postback)
       if (webhook_event.postback) {
         const payload = webhook_event.postback.payload;
 
+        // Special handling for CONTACT_SUPPORT - switch to admin mode
         if (payload === "CONTACT_SUPPORT") {
           notifyAdmin(sender_psid);
+          setAdminMode(sender_psid);
+          await handleResponse(sender_psid, payload);
+          res.status(200).send("EVENT_RECEIVED");
+          continue;
+        }
+
+        // Check for special commands to re-enable bot
+        if (payload === "ENABLE_BOT") {
+          setBotMode(sender_psid);
+          await sendTextWithQuickReplies(sender_psid, "✅ Бот дахин идэвхтэй боллоо!", defaultQuickReplies);
+          res.status(200).send("EVENT_RECEIVED");
+          continue;
+        }
+
+        // Skip bot response if in admin mode
+        if (isAdminMode(sender_psid)) {
+          res.status(200).send("EVENT_RECEIVED");
+          continue;
         }
 
         await handleResponse(sender_psid, payload);
@@ -236,6 +364,13 @@ app.post("/webhook", async (req, res) => {
 
         if (payload === "CONTACT_SUPPORT") {
           notifyAdmin(sender_psid);
+          setAdminMode(sender_psid);
+        }
+
+        // Skip bot response if in admin mode
+        if (isAdminMode(sender_psid)) {
+          res.status(200).send("EVENT_RECEIVED");
+          continue;
         }
 
         await handleResponse(sender_psid, payload);
@@ -244,8 +379,25 @@ app.post("/webhook", async (req, res) => {
       // 3. Handle TYPED TEXT (Message)
       else if (webhook_event.message && webhook_event.message.text) {
         const text = webhook_event.message.text.toLowerCase();
+        const originalText = webhook_event.message.text;
+
+        // Skip bot response if in admin mode
+        if (isAdminMode(sender_psid)) {
+          res.status(200).send("EVENT_RECEIVED");
+          continue;
+        }
+
+        // Check for bot re-enable command
+        if (text.includes("enable bot") || text.includes("бот асаа")) {
+          setBotMode(sender_psid);
+          await sendTextWithQuickReplies(sender_psid, "✅ Бот дахин идэвхтэй боллоо!", defaultQuickReplies);
+          res.status(200).send("EVENT_RECEIVED");
+          continue;
+        }
 
         // Check for specific keywords
+        let matched = false;
+
         if (
           text.includes("hi") ||
           text.includes("hello") ||
@@ -258,30 +410,54 @@ app.post("/webhook", async (req, res) => {
           text.includes("мэдээлэл")
         ) {
           await handleResponse(sender_psid, "GET_STARTED");
+          matched = true;
         }
         // Keyword shortcuts for quick navigation
         else if (text.includes("төлбөр") || text.includes("үнэ")) {
           await handleResponse(sender_psid, "TUITION");
+          matched = true;
         }
         else if (text.includes("хөтөлбөр") || text.includes("сургалт")) {
           await handleResponse(sender_psid, "CURRICULUM");
+          matched = true;
         }
         else if (text.includes("элсэлт") || text.includes("бүртгэл")) {
           await handleResponse(sender_psid, "ADMISSION");
+          matched = true;
         }
         else if (text.includes("хаяг") || text.includes("байршил") || text.includes("газар")) {
           await handleResponse(sender_psid, "LOCATION");
+          matched = true;
         }
         else if (text.includes("хоол") || text.includes("хоолны")) {
           await handleResponse(sender_psid, "SCHOOL_FOOD");
+          matched = true;
         }
         else if (text.includes("автобус") || text.includes("bus")) {
           await handleResponse(sender_psid, "SCHOOL_BUS");
+          matched = true;
         }
         else if (text.includes("холбоо") || text.includes("утас") || text.includes("contact")) {
           await handleResponse(sender_psid, "CONTACT");
+          matched = true;
         }
-        // If no keywords match, do nothing (so admin can reply manually)
+
+        // If no keywords matched, use Gemini AI as fallback
+        if (!matched) {
+          const language = detectLanguage(originalText);
+          const geminiResponse = await getGeminiResponse(originalText, language);
+
+          if (geminiResponse) {
+            // Send AI response with quick replies
+            await sendTextWithQuickReplies(sender_psid, geminiResponse, defaultQuickReplies);
+          } else {
+            // Fallback if Gemini fails or not configured
+            const fallbackMessage = language === 'en'
+              ? "I can help you with information about Oyunlag School. Please use the menu or ask about our programs, tuition, or admission."
+              : "Би Оюунлаг сургуулийн мэдээллээр тусалж чадна. Цэс ашиглана уу эсвэл хөтөлбөр, төлбөр, элсэлтийн талаар асуугаарай.";
+            await sendTextWithQuickReplies(sender_psid, fallbackMessage, defaultQuickReplies);
+          }
+        }
       }
     }
 
@@ -405,8 +581,16 @@ async function notifyAdmin(senderPsid) {
         color: 3447003,
         fields: [
           {
-            name: "Үйлдэл шаардлагатай",
-            value: `[Энд дарж хариу өгнө үү](${inboxLink})`,
+            name: "⚙️ Системийн статус",
+            value: "✅ Бот унтраагдсан - админ горим идэвхтэй\n🤖 Бот хариулахгүй хүртэл та хариулна",
+          },
+          {
+            name: "📋 Үйлдэл шаардлагатай",
+            value: `[📨 Facebook Inbox-руу очих](${inboxLink})`,
+          },
+          {
+            name: "ℹ️ Анхааруулга",
+            value: "Таны хариулсны дараа хэрэглэгч дахин асуулт асуувал бот хариулахгүй. Хэрэглэгч 'enable bot' эсвэл 'бот асаа' гэвэл бот дахин идэвхжинэ.",
           },
         ],
         timestamp: new Date().toISOString(),
@@ -416,6 +600,7 @@ async function notifyAdmin(senderPsid) {
 
   try {
     await axios.post(DISCORD_WEBHOOK_URL, message);
+    console.log(`Admin notification sent for PSID: ${senderPsid}`);
   } catch (error) {
     console.error("Failed to send Discord notification:", error.message);
   }
