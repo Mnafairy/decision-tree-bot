@@ -2,7 +2,7 @@
 
 A comprehensive Facebook Messenger chatbot for **Oyunlag School** in Ulaanbaatar, Mongolia. Features AI-powered responses, admin handoff, and a modern conversational UI.
 
-![Version](https://img.shields.io/badge/version-3.0-blue)
+![Version](https://img.shields.io/badge/version-3.1-blue)
 ![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-green)
 ![License](https://img.shields.io/badge/license-ISC-orange)
 
@@ -17,17 +17,29 @@ A comprehensive Facebook Messenger chatbot for **Oyunlag School** in Ulaanbaatar
 - **☰ Persistent Menu:** Hamburger menu always accessible
 - **🔍 Smart Keyword Detection:** Auto-routes based on Mongolian/English keywords
 
-### AI-Powered (NEW)
+### AI-Powered
 - **🤖 Google Gemini Integration:** Answers questions outside the menu
 - **🌐 Multilingual:** Auto-detects and responds in Mongolian or English
 - **🛡️ Guardrails:** Rejects off-topic questions, handles rude users politely
 - **📚 School Knowledge:** Trained on tuition, curriculum, admission info
 
-### Admin Features (NEW)
+### Admin Features
 - **👤 Admin Takeover:** Bot disables when support is requested
 - **🔔 Discord Notifications:** Alerts when user needs human support
 - **💬 Conversation State:** Tracks bot vs admin mode per user
 - **🔄 Re-enable Command:** User can turn bot back on with "enable bot"
+
+### Analytics & Personalization (NEW)
+- **📊 Google Analytics:** Tracks user interactions, AI queries, support requests
+- **👤 User Profiles:** Stores user data in Firebase (name, preferences, history)
+- **💝 Personalized Greetings:** Remembers users and their previous inquiries
+- **📈 Usage Tracking:** Monitors menu clicks, AI queries, and support requests
+
+### Enhanced Features (NEW)
+- **🏫 Virtual Tour:** 360° carousel of school facilities (6 locations)
+- **🔔 Event Notifications:** Subscribe to school events and reminders
+- **📚 10 Menu Options:** Expanded from 8 to 10 sections
+- **🎯 Smart Inquiry Tracking:** Remembers what users asked about
 
 ---
 
@@ -36,6 +48,8 @@ A comprehensive Facebook Messenger chatbot for **Oyunlag School** in Ulaanbaatar
 - **Backend:** Node.js, Express.js
 - **AI:** Google Gemini 2.0 Flash
 - **APIs:** Facebook Messenger Platform (Graph API v21.0)
+- **Database:** Firebase Realtime Database
+- **Analytics:** Google Analytics (Universal Analytics)
 - **Notifications:** Discord Webhooks
 - **Deployment:** Vercel (Serverless)
 - **Version Control:** Git + GitHub
@@ -75,7 +89,12 @@ A comprehensive Facebook Messenger chatbot for **Oyunlag School** in Ulaanbaatar
    PAGE_ACCESS_TOKEN=your_facebook_page_access_token
    VERIFY_TOKEN=your_custom_verify_token
    PAGE_ID=your_facebook_page_id
+   FIREBASE_PROJECT_ID=your_firebase_project_id
+   FIREBASE_PRIVATE_KEY="your_firebase_private_key"
+   FIREBASE_CLIENT_EMAIL=your_firebase_client_email
+   FIREBASE_DATABASE_URL=https://your-project.firebaseio.com
    GEMINI_API_KEY=your_gemini_api_key        # Optional
+   GA_TRACKING_ID=UA-XXXXXXXXX-X             # Optional
    DISCORD_WEBHOOK_URL=your_discord_webhook  # Optional
    ```
 
@@ -250,7 +269,12 @@ detectLanguage(text)                       // Detect mn or en
 | `PAGE_ACCESS_TOKEN` | ✅ Yes | Facebook Page Access Token |
 | `VERIFY_TOKEN` | ✅ Yes | Webhook verification token |
 | `PAGE_ID` | ✅ Yes | Facebook Page ID |
+| `FIREBASE_PROJECT_ID` | ✅ Yes | Firebase project ID |
+| `FIREBASE_PRIVATE_KEY` | ✅ Yes | Firebase private key (from service account JSON) |
+| `FIREBASE_CLIENT_EMAIL` | ✅ Yes | Firebase client email |
+| `FIREBASE_DATABASE_URL` | ✅ Yes | Firebase Realtime Database URL |
 | `GEMINI_API_KEY` | ❌ No | Google Gemini API key (for AI responses) |
+| `GA_TRACKING_ID` | ❌ No | Google Analytics tracking ID (UA-XXXXXXXXX-X) |
 | `DISCORD_WEBHOOK_URL` | ❌ No | Discord webhook for support notifications |
 | `PORT` | ❌ No | Server port (default: 3000) |
 | `NODE_ENV` | ❌ No | Environment (development/production) |
@@ -489,6 +513,16 @@ ISC License
 ---
 
 ## Changelog 📝
+
+### v3.1 (2026-01-10)
+- ✨ Added Firebase Realtime Database for user data persistence
+- ✨ Added Google Analytics tracking for usage metrics
+- ✨ Added personalized greetings based on user history
+- ✨ Added Virtual Tour with 360° images carousel (6 locations)
+- ✨ Added Event Notifications subscription system
+- 📊 Track AI queries, menu clicks, support requests
+- 👤 User profiles with preferences and inquiry history
+- 📚 Expanded to 10 menu options (from 8)
 
 ### v3.0 (2026-01-10)
 - ✨ Added Google Gemini AI integration

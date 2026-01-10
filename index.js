@@ -3,16 +3,66 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const axios = require("axios");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const admin = require("firebase-admin");
+const ua = require("universal-analytics");
 
 const app = express();
 app.use(bodyParser.json());
 
-const { PAGE_ACCESS_TOKEN, VERIFY_TOKEN, DISCORD_WEBHOOK_URL, PAGE_ID, GEMINI_API_KEY } =
-  process.env;
+const {
+  PAGE_ACCESS_TOKEN,
+  VERIFY_TOKEN,
+  DISCORD_WEBHOOK_URL,
+  PAGE_ID,
+  GEMINI_API_KEY,
+  FIREBASE_PROJECT_ID,
+  FIREBASE_PRIVATE_KEY,
+  FIREBASE_CLIENT_EMAIL,
+  FIREBASE_DATABASE_URL,
+  GA_TRACKING_ID,
+} = process.env;
 
 // Initialize Gemini AI
 const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 const geminiModel = genAI ? genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" }) : null;
+
+// Initialize Firebase Admin
+let db = null;
+if (FIREBASE_PROJECT_ID && FIREBASE_PRIVATE_KEY && FIREBASE_CLIENT_EMAIL) {
+  try {
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: FIREBASE_PROJECT_ID,
+        privateKey: FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+        clientEmail: FIREBASE_CLIENT_EMAIL,
+      }),
+      databaseURL: FIREBASE_DATABASE_URL,
+    });
+    db = admin.database();
+    console.log("✅ Firebase initialized successfully");
+  } catch (error) {
+    console.error("❌ Firebase initialization error:", error.message);
+  }
+}
+
+// Initialize Google Analytics
+const analyticsEnabled = !!GA_TRACKING_ID;
+const analytics = analyticsEnabled ? ua(GA_TRACKING_ID) : null;
+
+// Helper function to track events in Google Analytics
+function trackEvent(category, action, label, value, userId) {
+  if (!analyticsEnabled || !analytics) return;
+
+  try {
+    const event = analytics.event(category, action, label, value);
+    if (userId) {
+      event.set("uid", userId);
+    }
+    event.send();
+  } catch (error) {
+    console.error("Analytics tracking error:", error.message);
+  }
+}
 
 // --- CONVERSATION STATE MANAGEMENT ---
 // Tracks which conversations are in admin mode (bot disabled)
@@ -114,6 +164,138 @@ function detectLanguage(text) {
   return cyrillicPattern.test(text) ? 'mn' : 'en';
 }
 
+// --- USER DATA MANAGEMENT (Firebase) ---
+
+// Get user profile from Facebook
+async function getUserProfile(psid) {
+  if (!PAGE_ACCESS_TOKEN) return null;
+
+  try {
+    const response = await axios.get(
+      `https://graph.facebook.com/v21.0/${psid}?fields=first_name,last_name,profile_pic&access_token=${PAGE_ACCESS_TOKEN}`
+    );
+    return response.data;
+  } catch (error) {
+    console.error("Error fetching user profile:", error.message);
+    return null;
+  }
+}
+
+// Get or create user data in Firebase
+async function getUserData(psid) {
+  if (!db) return null;
+
+  try {
+    const userRef = db.ref(`users/${psid}`);
+    const snapshot = await userRef.once('value');
+
+    if (snapshot.exists()) {
+      return snapshot.val();
+    } else {
+      // Create new user profile
+      const profile = await getUserProfile(psid);
+      const newUser = {
+        psid: psid,
+        firstName: profile?.first_name || "User",
+        lastName: profile?.last_name || "",
+        profilePic: profile?.profile_pic || "",
+        createdAt: Date.now(),
+        lastActive: Date.now(),
+        totalMessages: 0,
+        inquiries: [],
+        preferences: {
+          language: 'mn',
+          interestedGrade: null,
+          interestedProgram: null,
+        },
+        stats: {
+          menuClicks: 0,
+          aiQueries: 0,
+          supportRequests: 0,
+        },
+      };
+
+      await userRef.set(newUser);
+      return newUser;
+    }
+  } catch (error) {
+    console.error("Error getting user data:", error.message);
+    return null;
+  }
+}
+
+// Update user data
+async function updateUserData(psid, updates) {
+  if (!db) return;
+
+  try {
+    const userRef = db.ref(`users/${psid}`);
+    await userRef.update({
+      ...updates,
+      lastActive: Date.now(),
+    });
+  } catch (error) {
+    console.error("Error updating user data:", error.message);
+  }
+}
+
+// Track user inquiry
+async function trackInquiry(psid, topic, method = 'menu') {
+  if (!db) return;
+
+  try {
+    const userRef = db.ref(`users/${psid}`);
+    const snapshot = await userRef.once('value');
+    const userData = snapshot.val();
+
+    const inquiry = {
+      topic: topic,
+      method: method, // 'menu', 'ai', 'keyword'
+      timestamp: Date.now(),
+    };
+
+    const inquiries = userData?.inquiries || [];
+    inquiries.push(inquiry);
+
+    await userRef.update({
+      inquiries: inquiries.slice(-20), // Keep last 20 inquiries
+      totalMessages: (userData?.totalMessages || 0) + 1,
+    });
+  } catch (error) {
+    console.error("Error tracking inquiry:", error.message);
+  }
+}
+
+// Get personalized greeting
+async function getPersonalizedGreeting(psid) {
+  const userData = await getUserData(psid);
+  if (!userData) return "Сайн байна уу!";
+
+  const firstName = userData.firstName;
+  const inquiries = userData.inquiries || [];
+  const lastInquiry = inquiries[inquiries.length - 1];
+
+  // If user has previous inquiries
+  if (lastInquiry) {
+    const topicNames = {
+      CURRICULUM: "хөтөлбөрийн",
+      TUITION: "төлбөрийн",
+      ADMISSION: "элсэлтийн",
+      LOCATION: "байршлын",
+      SCHOOL_FOOD: "хоолны",
+      SCHOOL_BUS: "автобусны",
+    };
+
+    const topicName = topicNames[lastInquiry.topic] || "";
+
+    if (topicName) {
+      return `Сайн байна уу ${firstName}! 👋 Та өмнө ${topicName} талаар асуусан байсан. Өнөөдөр юугаар тусалж чадах вэ?`;
+    }
+  }
+
+  return `Сайн байна уу ${firstName}! 👋 Оюунлаг сургуулийн мэдээллийн бот-д тавтай морил!`;
+}
+
 // --- QUICK REPLIES (Shown above message input) ---
 const defaultQuickReplies = [
   { content_type: "text", title: "📚 Сургалтын хөтөлбөр", payload: "CURRICULUM" },
@@ -178,6 +360,76 @@ const mainMenuCarousel = [
     subtitle: "Манай багтай шууд холбогдох",
     image_url: "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=400&h=400&fit=crop",
     buttons: [{ type: "postback", title: "Холбогдох", payload: "CONTACT_SUPPORT" }],
+  },
+  {
+    title: "🏫 Виртуал Тур",
+    subtitle: "Манай сургуулийг үзээрэй - 360°",
+    image_url: "https://images.unsplash.com/photo-1562774053-701939374585?w=400&h=400&fit=crop",
+    buttons: [{ type: "postback", title: "Тур эхлүүлэх", payload: "VIRTUAL_TOUR" }],
+  },
+  {
+    title: "🔔 Мэдэгдэл",
+    subtitle: "Үйл явдлын мэдэгдэл авах",
+    image_url: "https://images.unsplash.com/photo-1506784983877-45594efa4cbe?w=400&h=400&fit=crop",
+    buttons: [{ type: "postback", title: "Бүртгүүлэх", payload: "EVENT_NOTIFICATIONS" }],
+  },
+];
+
+// --- VIRTUAL TOUR CAROUSEL ---
+const virtualTourCarousel = [
+  {
+    title: "🏫 Сургуулийн орц",
+    subtitle: "Оюунлаг сургуулийн тансаг орц",
+    image_url: "https://images.unsplash.com/photo-1562774053-701939374585?w=600&h=600&fit=crop",
+    buttons: [
+      { type: "web_url", title: "360° үзэх", url: "https://www.oyunlag.edu.mn" },
+      { type: "postback", title: "Дараагийнх", payload: "GET_STARTED" },
+    ],
+  },
+  {
+    title: "📚 Анги танхим",
+    subtitle: "Орчин үеийн багшлагын орчин",
+    image_url: "https://images.unsplash.com/photo-1503676260728-1c00da094a0b?w=600&h=600&fit=crop",
+    buttons: [
+      { type: "web_url", title: "360° үзэх", url: "https://www.oyunlag.edu.mn" },
+      { type: "postback", title: "Дараагийнх", payload: "GET_STARTED" },
+    ],
+  },
+  {
+    title: "🔬 Лаборатори",
+    subtitle: "Шинжлэх ухаан, эрдэм шинжилгээний лаборатори",
+    image_url: "https://images.unsplash.com/photo-1532094349884-543bc11b234d?w=600&h=600&fit=crop",
+    buttons: [
+      { type: "web_url", title: "360° үзэх", url: "https://www.oyunlag.edu.mn" },
+      { type: "postback", title: "Дараагийнх", payload: "GET_STARTED" },
+    ],
+  },
+  {
+    title: "📖 Номын сан",
+    subtitle: "10,000+ номтой өргөн номын сан",
+    image_url: "https://images.unsplash.com/photo-1521587760476-6c12a4b040da?w=600&h=600&fit=crop",
+    buttons: [
+      { type: "web_url", title: "360° үзэх", url: "https://www.oyunlag.edu.mn" },
+      { type: "postback", title: "Дараагийнх", payload: "GET_STARTED" },
+    ],
+  },
+  {
+    title: "⚽ Тоглоомын талбай",
+    subtitle: "Өргөн спортын болон тоглоомын талбай",
+    image_url: "https://images.unsplash.com/photo-1551958219-acbc608c6377?w=600&h=600&fit=crop",
+    buttons: [
+      { type: "web_url", title: "360° үзэх", url: "https://www.oyunlag.edu.mn" },
+      { type: "postback", title: "Буцах", payload: "GET_STARTED" },
+    ],
+  },
+  {
+    title: "🍽️ Хоолны газар",
+    subtitle: "Эрүүл хоолтой орчин үеийн хоолны газар",
+    image_url: "https://images.unsplash.com/photo-1567521464027-f127ff144326?w=600&h=600&fit=crop",
+    buttons: [
+      { type: "web_url", title: "360° үзэх", url: "https://www.oyunlag.edu.mn" },
+      { type: "postback", title: "Буцах", payload: "GET_STARTED" },
+    ],
   },
 ];
 
@@ -297,6 +549,31 @@ const content = {
       { type: "postback", title: "🏠 Буцах", payload: "GET_STARTED" },
     ],
   },
+  VIRTUAL_TOUR: {
+    type: "carousel",
+    text: "🏫 Виртуал Тур - Манай сургуулийг үзээрэй!",
+    quickReplies: extendedQuickReplies,
+  },
+  EVENT_NOTIFICATIONS: {
+    type: "button",
+    text: "🔔 Сургуулийн арга хэмжээний мэдэгдэл\n\nТа үйл явдлын мэдэгдэл авахыг хүсч байна уу?\n\n✅ Нээлттэй хаалганы өдөр\n✅ Элсэлтийн хугацаа\n✅ Шалгалтын хуваарь\n✅ Сарын мэдээлэл",
+    buttons: [
+      { type: "postback", title: "✅ Мэдэгдэл авах", payload: "SUBSCRIBE_EVENTS" },
+      { type: "postback", title: "❌ Цуцлах", payload: "UNSUBSCRIBE_EVENTS" },
+      { type: "postback", title: "🏠 Буцах", payload: "GET_STARTED" },
+    ],
+    quickReplies: extendedQuickReplies,
+  },
+  SUBSCRIBE_EVENTS: {
+    type: "text_with_quick_replies",
+    text: "✅ Амжилттай!\n\nТа одоо сургуулийн үйл явдлын мэдэгдэл авах болно. Бид танд чухал мэдээллүүдийг цаг тухайд нь хүргэх болно! 📬",
+    quickReplies: defaultQuickReplies,
+  },
+  UNSUBSCRIBE_EVENTS: {
+    type: "text_with_quick_replies",
+    text: "❌ Та мэдэгдлээс гарлаа.\n\nХэрэв дахин мэдэгдэл авахыг хүсвэл цэснээс 'Мэдэгдэл' гэснийг сонгоно уу.",
+    quickReplies: defaultQuickReplies,
+  },
 };
 
 // --- WEBHOOK VERIFICATION ---
@@ -328,6 +605,12 @@ app.post("/webhook", async (req, res) => {
       const state = getConversationState(sender_psid);
       state.lastUserMessage = Date.now();
 
+      // Ensure user exists in Firebase (creates if first time)
+      await getUserData(sender_psid);
+
+      // Track session in Google Analytics
+      trackEvent("User Session", "Active", "User Interaction", 1, sender_psid);
+
       // 1. Handle BUTTON CLICKS (Postback)
       if (webhook_event.postback) {
         const payload = webhook_event.postback.payload;
@@ -336,6 +619,10 @@ app.post("/webhook", async (req, res) => {
         if (payload === "CONTACT_SUPPORT") {
           notifyAdmin(sender_psid);
           setAdminMode(sender_psid);
+          trackEvent("Support Request", "Contact Support", "User Requested Help", 1, sender_psid);
+          await updateUserData(sender_psid, {
+            "stats/supportRequests": admin.database.ServerValue.increment(1),
+          });
           await handleResponse(sender_psid, payload);
           res.status(200).send("EVENT_RECEIVED");
           continue;
@@ -365,6 +652,10 @@ app.post("/webhook", async (req, res) => {
         if (payload === "CONTACT_SUPPORT") {
           notifyAdmin(sender_psid);
           setAdminMode(sender_psid);
+          trackEvent("Support Request", "Contact Support", "User Requested Help", 1, sender_psid);
+          await updateUserData(sender_psid, {
+            "stats/supportRequests": admin.database.ServerValue.increment(1),
+          });
         }
 
         // Skip bot response if in admin mode
@@ -448,6 +739,13 @@ app.post("/webhook", async (req, res) => {
           const geminiResponse = await getGeminiResponse(originalText, language);
 
           if (geminiResponse) {
+            // Track AI query
+            trackEvent("AI Query", "Gemini Response", originalText, 1, sender_psid);
+            await trackInquiry(sender_psid, "AI_QUERY", 'ai');
+            await updateUserData(sender_psid, {
+              "stats/aiQueries": admin.database.ServerValue.increment(1),
+            });
+
             // Send AI response with quick replies
             await sendTextWithQuickReplies(sender_psid, geminiResponse, defaultQuickReplies);
           } else {
@@ -470,6 +768,45 @@ app.post("/webhook", async (req, res) => {
 // --- RESPONSE HANDLER ---
 async function handleResponse(senderPsid, payload) {
   const data = content[payload] || content["GET_STARTED"];
+
+  // Track analytics
+  trackEvent("User Interaction", payload, "Menu Click", 1, senderPsid);
+
+  // Track inquiry in Firebase
+  await trackInquiry(senderPsid, payload, 'menu');
+
+  // Handle special cases
+  if (payload === "GET_STARTED") {
+    // Use personalized greeting
+    const greeting = await getPersonalizedGreeting(senderPsid);
+    await sendTextWithQuickReplies(senderPsid, greeting, data.quickReplies);
+    await sendCarousel(senderPsid, mainMenuCarousel);
+    return;
+  }
+
+  if (payload === "VIRTUAL_TOUR") {
+    // Send virtual tour carousel
+    await sendTextWithQuickReplies(senderPsid, data.text, data.quickReplies);
+    await sendCarousel(senderPsid, virtualTourCarousel);
+    return;
+  }
+
+  if (payload === "SUBSCRIBE_EVENTS") {
+    // Subscribe user to events in Firebase
+    await updateUserData(senderPsid, {
+      "preferences/eventNotifications": true,
+      "stats/eventSubscriptions": admin.database.ServerValue.increment(1),
+    });
+    trackEvent("Event Notifications", "Subscribe", "User Subscribed", 1, senderPsid);
+  }
+
+  if (payload === "UNSUBSCRIBE_EVENTS") {
+    // Unsubscribe user from events
+    await updateUserData(senderPsid, {
+      "preferences/eventNotifications": false,
+    });
+    trackEvent("Event Notifications", "Unsubscribe", "User Unsubscribed", 1, senderPsid);
+  }
 
   // Handle different response types
   switch (data.type) {
