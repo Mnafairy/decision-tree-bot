@@ -5,6 +5,7 @@ const axios = require("axios");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const admin = require("firebase-admin");
 const ua = require("universal-analytics");
+const faqDatabase = require("./faq-database");
 
 const app = express();
 app.use(bodyParser.json());
@@ -162,6 +163,89 @@ function detectLanguage(text) {
   // Simple heuristic: if contains Cyrillic, it's Mongolian
   const cyrillicPattern = /[\u0400-\u04FF]/;
   return cyrillicPattern.test(text) ? 'mn' : 'en';
+}
+
+// --- FAQ SEARCH FUNCTIONALITY ---
+
+// Search FAQ database with keyword matching
+function searchFAQ(query) {
+  if (!query || query.trim().length < 2) return [];
+
+  const normalizedQuery = query.toLowerCase().trim();
+  const matches = [];
+
+  for (const faq of faqDatabase) {
+    let score = 0;
+
+    // Check if query matches question directly
+    if (faq.question.toLowerCase().includes(normalizedQuery)) {
+      score += 50;
+    }
+
+    // Check if query matches answer
+    if (faq.answer.toLowerCase().includes(normalizedQuery)) {
+      score += 20;
+    }
+
+    // Check keywords
+    for (const keyword of faq.keywords) {
+      if (normalizedQuery.includes(keyword.toLowerCase()) || keyword.toLowerCase().includes(normalizedQuery)) {
+        score += 10;
+      }
+    }
+
+    // If we have a match, add to results
+    if (score > 0) {
+      matches.push({ ...faq, score });
+    }
+  }
+
+  // Sort by score (highest first) and return top 3
+  return matches.sort((a, b) => b.score - a.score).slice(0, 3);
+}
+
+// Get FAQ quick replies for "Was this helpful?" feedback
+function getFAQFeedbackQuickReplies(faqId) {
+  return [
+    { content_type: "text", title: "✅ Тийм, тусалсан", payload: `FAQ_HELPFUL_${faqId}` },
+    { content_type: "text", title: "❌ Үгүй, туслаагүй", payload: `FAQ_NOT_HELPFUL_${faqId}` },
+    { content_type: "text", title: "🏠 Үндсэн цэс", payload: "GET_STARTED" },
+  ];
+}
+
+// Track FAQ feedback
+async function trackFAQFeedback(psid, faqId, helpful) {
+  if (!db) return;
+
+  try {
+    const feedbackRef = db.ref(`faq_feedback/${faqId}`);
+    const snapshot = await feedbackRef.once('value');
+    const currentData = snapshot.val() || { helpful: 0, notHelpful: 0 };
+
+    if (helpful) {
+      currentData.helpful = (currentData.helpful || 0) + 1;
+    } else {
+      currentData.notHelpful = (currentData.notHelpful || 0) + 1;
+    }
+
+    await feedbackRef.set(currentData);
+
+    // Also track in user data
+    await updateUserData(psid, {
+      [`faqFeedback/${faqId}`]: helpful,
+    });
+
+    // Track in analytics
+    trackEvent(
+      "FAQ Feedback",
+      helpful ? "Helpful" : "Not Helpful",
+      faqId,
+      1,
+      psid
+    );
+  } catch (error) {
+    console.error("Error tracking FAQ feedback:", error.message);
+  }
 }
 
 // --- USER DATA MANAGEMENT (Firebase) ---
@@ -733,27 +817,58 @@ app.post("/webhook", async (req, res) => {
           matched = true;
         }
 
-        // If no keywords matched, use Gemini AI as fallback
+        // If no keywords matched, try FAQ search first
         if (!matched) {
-          const language = detectLanguage(originalText);
-          const geminiResponse = await getGeminiResponse(originalText, language);
+          const faqResults = searchFAQ(originalText);
 
-          if (geminiResponse) {
-            // Track AI query
-            trackEvent("AI Query", "Gemini Response", originalText, 1, sender_psid);
-            await trackInquiry(sender_psid, "AI_QUERY", 'ai');
+          if (faqResults.length > 0) {
+            // FAQ match found! Send the best match
+            const bestMatch = faqResults[0];
+
+            // Track FAQ usage
+            trackEvent("FAQ Search", "FAQ Found", bestMatch.id, 1, sender_psid);
+            await trackInquiry(sender_psid, `FAQ_${bestMatch.id}`, 'faq');
             await updateUserData(sender_psid, {
-              "stats/aiQueries": admin.database.ServerValue.increment(1),
+              "stats/faqQueries": admin.database.ServerValue.increment(1),
             });
 
-            // Send AI response with quick replies
-            await sendTextWithQuickReplies(sender_psid, geminiResponse, defaultQuickReplies);
+            // Send FAQ answer with feedback quick replies
+            await sendTextWithQuickReplies(
+              sender_psid,
+              `💡 ${bestMatch.answer}`,
+              getFAQFeedbackQuickReplies(bestMatch.id)
+            );
+
+            // If there are more results, show them as suggestions
+            if (faqResults.length > 1) {
+              let suggestions = "\n\n📚 Холбоотой асуултууд:";
+              for (let i = 1; i < Math.min(3, faqResults.length); i++) {
+                suggestions += `\n• ${faqResults[i].question}`;
+              }
+              await sendTextWithQuickReplies(sender_psid, suggestions, defaultQuickReplies);
+            }
           } else {
-            // Fallback if Gemini fails or not configured
-            const fallbackMessage = language === 'en'
-              ? "I can help you with information about Oyunlag School. Please use the menu or ask about our programs, tuition, or admission."
-              : "Би Оюунлаг сургуулийн мэдээллээр тусалж чадна. Цэс ашиглана уу эсвэл хөтөлбөр, төлбөр, элсэлтийн талаар асуугаарай.";
-            await sendTextWithQuickReplies(sender_psid, fallbackMessage, defaultQuickReplies);
+            // No FAQ match, try Gemini AI
+            const language = detectLanguage(originalText);
+            const geminiResponse = await getGeminiResponse(originalText, language);
+
+            if (geminiResponse) {
+              // Track AI query
+              trackEvent("AI Query", "Gemini Response", originalText, 1, sender_psid);
+              await trackInquiry(sender_psid, "AI_QUERY", 'ai');
+              await updateUserData(sender_psid, {
+                "stats/aiQueries": admin.database.ServerValue.increment(1),
+              });
+
+              // Send AI response with quick replies
+              await sendTextWithQuickReplies(sender_psid, geminiResponse, defaultQuickReplies);
+            } else {
+              // Fallback if both FAQ and Gemini fail
+              const fallbackMessage = language === 'en'
+                ? "I can help you with information about Oyunlag School. Please use the menu or ask about our programs, tuition, or admission."
+                : "Би Оюунлаг сургуулийн мэдээллээр тусалж чадна. Цэс ашиглана уу эсвэл хөтөлбөр, төлбөр, элсэлтийн талаар асуугаарай.";
+              await sendTextWithQuickReplies(sender_psid, fallbackMessage, defaultQuickReplies);
+            }
           }
         }
       }
