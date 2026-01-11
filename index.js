@@ -30,37 +30,64 @@ const geminiModel = genAI ? genAI.getGenerativeModel({ model: "gemini-1.5-flash"
 
 // Initialize Firebase Admin
 let db = null;
-if (FIREBASE_PROJECT_ID && FIREBASE_PRIVATE_KEY && FIREBASE_CLIENT_EMAIL) {
-  try {
-    // Handle both regular newlines and escaped newlines in private key
-    let privateKey = FIREBASE_PRIVATE_KEY;
+(async () => {
+  if (FIREBASE_PROJECT_ID && FIREBASE_PRIVATE_KEY && FIREBASE_CLIENT_EMAIL && FIREBASE_DATABASE_URL) {
+    try {
+      // Handle both regular newlines and escaped newlines in private key
+      let privateKey = FIREBASE_PRIVATE_KEY;
 
-    // If the key doesn't contain actual newlines, try replacing escaped ones
-    if (!privateKey.includes('\n') && privateKey.includes('\\n')) {
-      privateKey = privateKey.replace(/\\n/g, '\n');
+      // If the key doesn't contain actual newlines, try replacing escaped ones
+      if (!privateKey.includes('\n') && privateKey.includes('\\n')) {
+        privateKey = privateKey.replace(/\\n/g, '\n');
+      }
+
+      // Verify the key starts with the proper PEM header
+      if (!privateKey.includes('-----BEGIN PRIVATE KEY-----')) {
+        throw new Error('Private key missing PEM header. Make sure your .env file has the complete private key including -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY-----');
+      }
+
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: FIREBASE_PROJECT_ID,
+          privateKey: privateKey,
+          clientEmail: FIREBASE_CLIENT_EMAIL,
+        }),
+        databaseURL: FIREBASE_DATABASE_URL,
+      });
+
+      // Test the connection with timeout
+      db = admin.database();
+      await Promise.race([
+        db.ref('.info/connected').once('value'),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Connection timeout')), 5000))
+      ]);
+      console.log("✅ Firebase initialized and connected successfully");
+    } catch (error) {
+      console.error("❌ Firebase initialization error:", error.message);
+      console.error("💡 TIP: Make sure your FIREBASE_PRIVATE_KEY in .env includes the full key with -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY-----");
+      console.error("💡 TIP: In .env file, the private key should have \\n for line breaks, like: FIREBASE_PRIVATE_KEY=\"-----BEGIN PRIVATE KEY-----\\nMIIE...\\n-----END PRIVATE KEY-----\\n\"");
+      console.error("⚠️ Bot will continue without Firebase (no user tracking/personalization)");
+      // Disable Firebase completely
+      db = null;
+      try {
+        if (admin.apps.length > 0) {
+          await admin.app().delete();
+        }
+      } catch (deleteError) {
+        // Ignore deletion errors
+      }
     }
-
-    // Verify the key starts with the proper PEM header
-    if (!privateKey.includes('-----BEGIN PRIVATE KEY-----')) {
-      throw new Error('Private key missing PEM header. Make sure your .env file has the complete private key including -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY-----');
-    }
-
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: FIREBASE_PROJECT_ID,
-        privateKey: privateKey,
-        clientEmail: FIREBASE_CLIENT_EMAIL,
-      }),
-      databaseURL: FIREBASE_DATABASE_URL,
-    });
-    db = admin.database();
-    console.log("✅ Firebase initialized successfully");
-  } catch (error) {
-    console.error("❌ Firebase initialization error:", error.message);
-    console.error("💡 TIP: Make sure your FIREBASE_PRIVATE_KEY in .env includes the full key with -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY-----");
-    console.error("💡 TIP: In .env file, the private key should have \\n for line breaks, like: FIREBASE_PRIVATE_KEY=\"-----BEGIN PRIVATE KEY-----\\nMIIE...\\n-----END PRIVATE KEY-----\\n\"");
+  } else {
+    console.log("⚠️ Firebase not configured - missing required environment variables");
+    console.log(`  FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID ? '✅' : '❌'}`);
+    console.log(`  FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY ? '✅' : '❌'}`);
+    console.log(`  FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL ? '✅' : '❌'}`);
+    console.log(`  FIREBASE_DATABASE_URL: ${FIREBASE_DATABASE_URL ? '✅' : '❌'}`);
   }
-}
+})().catch(err => {
+  console.error("❌ Fatal Firebase initialization error:", err);
+  db = null;
+});
 
 // Initialize Google Analytics
 const analyticsEnabled = !!GA_TRACKING_ID;
@@ -808,14 +835,14 @@ app.post("/webhook", async (req, res) => {
         console.log(`Current conversation mode: ${state.mode}`);
 
         // Ensure user exists in Firebase (creates if first time)
-        // Don't let Firebase errors block the bot
-        try {
-          await getUserData(sender_psid);
-        } catch (fbError) {
-          console.error("⚠️ Firebase error (continuing anyway):", fbError.message);
+        // Run in background - don't wait for it to complete
+        if (db) {
+          getUserData(sender_psid).catch(fbError => {
+            console.error("⚠️ Firebase error (continuing anyway):", fbError.message);
+          });
         }
 
-        // Track session in Google Analytics
+        // Track session in Google Analytics (non-blocking)
         trackEvent("User Session", "Active", "User Interaction", 1, sender_psid);
 
       // 1. Handle BUTTON CLICKS (Postback)
@@ -827,9 +854,10 @@ app.post("/webhook", async (req, res) => {
           notifyAdmin(sender_psid);
           setAdminMode(sender_psid);
           trackEvent("Support Request", "Contact Support", "User Requested Help", 1, sender_psid);
-          await updateUserData(sender_psid, {
+          // Update stats (non-blocking)
+          updateUserData(sender_psid, {
             "stats/supportRequests": admin.database.ServerValue.increment(1),
-          });
+          }).catch(err => console.error("⚠️ updateUserData failed:", err.message));
           await handleResponse(sender_psid, payload);
           res.status(200).send("EVENT_RECEIVED");
           continue;
@@ -876,9 +904,10 @@ app.post("/webhook", async (req, res) => {
           notifyAdmin(sender_psid);
           setAdminMode(sender_psid);
           trackEvent("Support Request", "Contact Support", "User Requested Help", 1, sender_psid);
-          await updateUserData(sender_psid, {
+          // Update stats (non-blocking)
+          updateUserData(sender_psid, {
             "stats/supportRequests": admin.database.ServerValue.increment(1),
-          });
+          }).catch(err => console.error("⚠️ updateUserData failed:", err.message));
         }
 
         // Skip bot response if in admin mode
@@ -964,12 +993,14 @@ app.post("/webhook", async (req, res) => {
             // FAQ match found! Send the best match
             const bestMatch = faqResults[0];
 
-            // Track FAQ usage
+            // Track FAQ usage (non-blocking)
             trackEvent("FAQ Search", "FAQ Found", bestMatch.id, 1, sender_psid);
-            await trackInquiry(sender_psid, `FAQ_${bestMatch.id}`, 'faq');
-            await updateUserData(sender_psid, {
+            trackInquiry(sender_psid, `FAQ_${bestMatch.id}`, 'faq').catch(err =>
+              console.error("⚠️ trackInquiry failed:", err.message)
+            );
+            updateUserData(sender_psid, {
               "stats/faqQueries": admin.database.ServerValue.increment(1),
-            });
+            }).catch(err => console.error("⚠️ updateUserData failed:", err.message));
 
             // Send FAQ answer with feedback quick replies
             await sendTextWithQuickReplies(
@@ -992,12 +1023,14 @@ app.post("/webhook", async (req, res) => {
             const geminiResponse = await getGeminiResponse(originalText, language);
 
             if (geminiResponse) {
-              // Track AI query
+              // Track AI query (non-blocking)
               trackEvent("AI Query", "Gemini Response", originalText, 1, sender_psid);
-              await trackInquiry(sender_psid, "AI_QUERY", 'ai');
-              await updateUserData(sender_psid, {
+              trackInquiry(sender_psid, "AI_QUERY", 'ai').catch(err =>
+                console.error("⚠️ trackInquiry failed:", err.message)
+              );
+              updateUserData(sender_psid, {
                 "stats/aiQueries": admin.database.ServerValue.increment(1),
-              });
+              }).catch(err => console.error("⚠️ updateUserData failed:", err.message));
 
               // Send AI response with quick replies
               await sendTextWithQuickReplies(sender_psid, geminiResponse, defaultQuickReplies);
@@ -1055,13 +1088,24 @@ async function handleResponse(senderPsid, payload) {
   // Track analytics
   trackEvent("User Interaction", payload, "Menu Click", 1, senderPsid);
 
-  // Track inquiry in Firebase
-  await trackInquiry(senderPsid, payload, 'menu');
+  // Track inquiry in Firebase (non-blocking)
+  trackInquiry(senderPsid, payload, 'menu').catch(err => {
+    console.error("⚠️ trackInquiry failed:", err.message);
+  });
 
   // Handle special cases
   if (payload === "GET_STARTED") {
-    // Use personalized greeting
-    const greeting = await getPersonalizedGreeting(senderPsid);
+    // Use personalized greeting with timeout
+    let greeting;
+    try {
+      greeting = await Promise.race([
+        getPersonalizedGreeting(senderPsid),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Greeting timeout')), 2000))
+      ]);
+    } catch (error) {
+      console.log("⚠️ Greeting timed out, using default");
+      greeting = "Сайн байна уу! 👋 Оюунлаг сургуулийн мэдээллийн бот-д тавтай морил!";
+    }
     await sendTextWithQuickReplies(senderPsid, greeting, data.quickReplies);
     await sendCarousel(senderPsid, mainMenuCarousel);
     return;
@@ -1075,19 +1119,19 @@ async function handleResponse(senderPsid, payload) {
   }
 
   if (payload === "SUBSCRIBE_EVENTS") {
-    // Subscribe user to events in Firebase
-    await updateUserData(senderPsid, {
+    // Subscribe user to events in Firebase (non-blocking)
+    updateUserData(senderPsid, {
       "preferences/eventNotifications": true,
       "stats/eventSubscriptions": admin.database.ServerValue.increment(1),
-    });
+    }).catch(err => console.error("⚠️ updateUserData failed:", err.message));
     trackEvent("Event Notifications", "Subscribe", "User Subscribed", 1, senderPsid);
   }
 
   if (payload === "UNSUBSCRIBE_EVENTS") {
-    // Unsubscribe user from events
-    await updateUserData(senderPsid, {
+    // Unsubscribe user from events (non-blocking)
+    updateUserData(senderPsid, {
       "preferences/eventNotifications": false,
-    });
+    }).catch(err => console.error("⚠️ updateUserData failed:", err.message));
     trackEvent("Event Notifications", "Unsubscribe", "User Unsubscribed", 1, senderPsid);
   }
 
