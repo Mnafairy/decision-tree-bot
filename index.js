@@ -24,17 +24,31 @@ const {
 } = process.env;
 
 // Initialize Gemini AI
+// Using gemini-1.5-flash instead of gemini-2.0-flash-exp for better free tier quotas
 const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
-const geminiModel = genAI ? genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" }) : null;
+const geminiModel = genAI ? genAI.getGenerativeModel({ model: "gemini-1.5-flash" }) : null;
 
 // Initialize Firebase Admin
 let db = null;
 if (FIREBASE_PROJECT_ID && FIREBASE_PRIVATE_KEY && FIREBASE_CLIENT_EMAIL) {
   try {
+    // Handle both regular newlines and escaped newlines in private key
+    let privateKey = FIREBASE_PRIVATE_KEY;
+
+    // If the key doesn't contain actual newlines, try replacing escaped ones
+    if (!privateKey.includes('\n') && privateKey.includes('\\n')) {
+      privateKey = privateKey.replace(/\\n/g, '\n');
+    }
+
+    // Verify the key starts with the proper PEM header
+    if (!privateKey.includes('-----BEGIN PRIVATE KEY-----')) {
+      throw new Error('Private key missing PEM header. Make sure your .env file has the complete private key including -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY-----');
+    }
+
     admin.initializeApp({
       credential: admin.credential.cert({
         projectId: FIREBASE_PROJECT_ID,
-        privateKey: FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+        privateKey: privateKey,
         clientEmail: FIREBASE_CLIENT_EMAIL,
       }),
       databaseURL: FIREBASE_DATABASE_URL,
@@ -43,6 +57,8 @@ if (FIREBASE_PROJECT_ID && FIREBASE_PRIVATE_KEY && FIREBASE_CLIENT_EMAIL) {
     console.log("✅ Firebase initialized successfully");
   } catch (error) {
     console.error("❌ Firebase initialization error:", error.message);
+    console.error("💡 TIP: Make sure your FIREBASE_PRIVATE_KEY in .env includes the full key with -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY-----");
+    console.error("💡 TIP: In .env file, the private key should have \\n for line breaks, like: FIREBASE_PRIVATE_KEY=\"-----BEGIN PRIVATE KEY-----\\nMIIE...\\n-----END PRIVATE KEY-----\\n\"");
   }
 }
 
@@ -911,10 +927,16 @@ app.post("/webhook", async (req, res) => {
               await sendTextWithQuickReplies(sender_psid, geminiResponse, defaultQuickReplies);
             } else {
               // Fallback if both FAQ and Gemini fail
+              console.log(`⚠️ No FAQ or AI response available for: "${originalText}"`);
+
               const fallbackMessage = language === 'en'
-                ? "I can help you with information about Oyunlag School. Please use the menu or ask about our programs, tuition, or admission."
-                : "Би Оюунлаг сургуулийн мэдээллээр тусалж чадна. Цэс ашиглана уу эсвэл хөтөлбөр, төлбөр, элсэлтийн талаар асуугаарай.";
+                ? "I can help you with information about Oyunlag School. Please use the menu below or ask about:\n\n📚 Programs & Curriculum\n💰 Tuition & Fees\n📝 Admission\n📍 Location\n🍽️ Meals\n🚌 School Bus\n\nOr call us: 7575 5050"
+                : "Би Оюунлаг сургуулийн мэдээллээр тусалж чадна. Доорх цэс ашиглана уу эсвэл дараах мэдээлэл авна уу:\n\n📚 Сургалтын хөтөлбөр\n💰 Төлбөр\n📝 Элсэлт\n📍 Байршил\n🍽️ Хоол\n🚌 Автобус\n\nУтас: 7575 5050";
+
               await sendTextWithQuickReplies(sender_psid, fallbackMessage, defaultQuickReplies);
+
+              // Track fallback usage for improvement
+              trackEvent("Fallback", "No Match", originalText, 1, sender_psid);
             }
           }
         }
