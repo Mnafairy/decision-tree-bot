@@ -123,6 +123,17 @@ function setBotMode(psid) {
 
 function isAdminMode(psid) {
   const state = getConversationState(psid);
+
+  // Auto-reset admin mode if it's been more than 24 hours
+  if (state.mode === 'admin' && state.adminTakeoverTime) {
+    const hoursSinceAdminMode = (Date.now() - state.adminTakeoverTime) / (1000 * 60 * 60);
+    if (hoursSinceAdminMode > 24) {
+      console.log(`⚠️ Auto-resetting admin mode for PSID ${psid} (been ${hoursSinceAdminMode.toFixed(1)} hours)`);
+      setBotMode(psid);
+      return false;
+    }
+  }
+
   return state.mode === 'admin';
 }
 
@@ -236,7 +247,18 @@ function getFAQFeedbackQuickReplies(faqId) {
 
 // Track FAQ feedback
 async function trackFAQFeedback(psid, faqId, helpful) {
-  if (!db) return;
+  if (!db) {
+    console.log("⚠️ Firebase not configured, skipping FAQ feedback tracking");
+    // Still track in analytics if available
+    trackEvent(
+      "FAQ Feedback",
+      helpful ? "Helpful" : "Not Helpful",
+      faqId,
+      1,
+      psid
+    );
+    return;
+  }
 
   try {
     const feedbackRef = db.ref(`faq_feedback/${faqId}`);
@@ -265,7 +287,8 @@ async function trackFAQFeedback(psid, faqId, helpful) {
       psid
     );
   } catch (error) {
-    console.error("Error tracking FAQ feedback:", error.message);
+    console.error("❌ Error tracking FAQ feedback (continuing anyway):", error.message);
+    // Don't throw - Firebase errors shouldn't stop the bot
   }
 }
 
@@ -345,7 +368,10 @@ async function getUserData(psid) {
 
 // Update user data
 async function updateUserData(psid, updates) {
-  if (!db) return;
+  if (!db) {
+    console.log("⚠️ Firebase not configured, skipping user data update");
+    return;
+  }
 
   try {
     const userRef = db.ref(`users/${psid}`);
@@ -354,7 +380,8 @@ async function updateUserData(psid, updates) {
       lastActive: Date.now(),
     });
   } catch (error) {
-    console.error("Error updating user data:", error.message);
+    console.error("❌ Error updating user data:", error.message);
+    // Don't throw - we don't want Firebase errors to crash the bot
   }
 }
 
@@ -369,7 +396,7 @@ async function trackInquiry(psid, topic, method = 'menu') {
 
     const inquiry = {
       topic: topic,
-      method: method, // 'menu', 'ai', 'keyword'
+      method: method, // 'menu', 'ai', 'keyword', 'faq'
       timestamp: Date.now(),
     };
 
@@ -381,7 +408,8 @@ async function trackInquiry(psid, topic, method = 'menu') {
       totalMessages: (userData?.totalMessages || 0) + 1,
     });
   } catch (error) {
-    console.error("Error tracking inquiry:", error.message);
+    console.error("❌ Error tracking inquiry (continuing anyway):", error.message);
+    // Don't throw - Firebase errors shouldn't stop the bot
   }
 }
 
@@ -707,6 +735,44 @@ const content = {
   },
 };
 
+// --- STATUS ENDPOINT ---
+app.get("/", (req, res) => {
+  const status = {
+    status: "running",
+    timestamp: new Date().toISOString(),
+    services: {
+      gemini: !!geminiModel,
+      firebase: !!db,
+      analytics: analyticsEnabled,
+      pageAccessToken: !!PAGE_ACCESS_TOKEN,
+      verifyToken: !!VERIFY_TOKEN,
+    },
+    activeConversations: conversationStates.size,
+    adminModeConversations: Array.from(conversationStates.values()).filter(s => s.mode === 'admin').length,
+  };
+
+  res.json(status);
+});
+
+// --- CLEAR STUCK STATE ENDPOINT (for debugging) ---
+app.post("/admin/clear-state/:psid", (req, res) => {
+  const psid = req.params.psid;
+  const authHeader = req.headers.authorization;
+
+  // Simple auth check (you should set ADMIN_SECRET in your .env)
+  if (authHeader !== `Bearer ${process.env.ADMIN_SECRET}`) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  if (conversationStates.has(psid)) {
+    setBotMode(psid);
+    console.log(`✅ Cleared conversation state for PSID: ${psid}`);
+    res.json({ success: true, message: `Conversation state cleared for ${psid}` });
+  } else {
+    res.json({ success: false, message: `No conversation state found for ${psid}` });
+  }
+});
+
 // --- WEBHOOK VERIFICATION ---
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -729,18 +795,28 @@ app.post("/webhook", async (req, res) => {
 
   if (body.object === "page") {
     for (const entry of body.entry) {
-      let webhook_event = entry.messaging[0];
-      let sender_psid = webhook_event.sender.id;
+      try {
+        let webhook_event = entry.messaging[0];
+        let sender_psid = webhook_event.sender.id;
 
-      // Update last user message timestamp
-      const state = getConversationState(sender_psid);
-      state.lastUserMessage = Date.now();
+        console.log(`\n📨 New message from PSID: ${sender_psid}`);
+        console.log(`Event type: ${webhook_event.message ? 'message' : webhook_event.postback ? 'postback' : 'other'}`);
 
-      // Ensure user exists in Firebase (creates if first time)
-      await getUserData(sender_psid);
+        // Update last user message timestamp
+        const state = getConversationState(sender_psid);
+        state.lastUserMessage = Date.now();
+        console.log(`Current conversation mode: ${state.mode}`);
 
-      // Track session in Google Analytics
-      trackEvent("User Session", "Active", "User Interaction", 1, sender_psid);
+        // Ensure user exists in Firebase (creates if first time)
+        // Don't let Firebase errors block the bot
+        try {
+          await getUserData(sender_psid);
+        } catch (fbError) {
+          console.error("⚠️ Firebase error (continuing anyway):", fbError.message);
+        }
+
+        // Track session in Google Analytics
+        trackEvent("User Session", "Active", "User Interaction", 1, sender_psid);
 
       // 1. Handle BUTTON CLICKS (Postback)
       if (webhook_event.postback) {
@@ -941,8 +1017,31 @@ app.post("/webhook", async (req, res) => {
           }
         }
       }
+
+      } catch (error) {
+        // Catch any errors in message processing
+        console.error(`\n❌ Error processing message from PSID ${sender_psid || 'unknown'}:`, error.message);
+        console.error("Error stack:", error.stack);
+
+        // Try to send error message to user
+        if (sender_psid) {
+          try {
+            await sendTextWithQuickReplies(
+              sender_psid,
+              "Уучлаарай, алдаа гарлаа. Дахин оролдоно уу эсвэл 7575 5050 руу залгана уу.",
+              defaultQuickReplies
+            );
+          } catch (sendError) {
+            console.error("Failed to send error message to user:", sendError.message);
+          }
+
+          // Track error
+          trackEvent("Error", "Message Processing Failed", error.message, 1, sender_psid);
+        }
+      }
     }
 
+    // Always send 200 response to Facebook, even if there were errors
     res.status(200).send("EVENT_RECEIVED");
   } else {
     res.sendStatus(404);
@@ -1073,16 +1172,28 @@ async function sendButtonTemplate(senderPsid, text, buttons, quickReplies) {
 
 // --- SEND API ---
 async function callSendAPI(senderPsid, message) {
+  if (!PAGE_ACCESS_TOKEN) {
+    console.error("❌ Cannot send message: PAGE_ACCESS_TOKEN not configured");
+    return;
+  }
+
   try {
+    console.log(`📤 Sending message to PSID: ${senderPsid}`);
     await axios.post(
       `https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
       { recipient: { id: senderPsid }, message: message }
     );
+    console.log(`✅ Message sent successfully to PSID: ${senderPsid}`);
   } catch (error) {
     console.error(
-      "Error sending message:",
+      `❌ Error sending message to PSID ${senderPsid}:`,
       error.response ? error.response.data : error.message
     );
+    if (error.response) {
+      console.error("Facebook API error details:", JSON.stringify(error.response.data, null, 2));
+    }
+    // Re-throw error so caller knows the send failed
+    throw error;
   }
 }
 
